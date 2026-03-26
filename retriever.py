@@ -20,7 +20,7 @@ class CypherResponse(BaseModel):
 
 cypher_agent = Agent(
     "openai:qwen2.5:32b",
-    result_type=CypherResponse,
+    output_type=CypherResponse,
     system_prompt=(
         "Eres un Arquitecto de Datos B2B experto en Neo4j. "
         "Traduce preguntas de negocio a consultas Cypher exactas. "
@@ -39,11 +39,11 @@ async def query_graph(user_question: str):
         result = await cypher_agent.run(
             f"Pregunta del usuario: {user_question}. Genera el Cypher."
         )
-        print(f"⚙️ Cypher Generado: {result.data.query}")
-        print(f"📝 Razón: {result.data.explanation}")
+        print(f"⚙️ Cypher Generado: {result.output.query}")
+        print(f"📝 Razón: {result.output.explanation}")
 
         async with client.driver.session() as session:
-            records = await session.run(result.data.query)
+            records = await session.run(result.output.query)
             data = await records.data()
             print("\n📊 RESULTADOS DETERMINISTAS:")
             import json
