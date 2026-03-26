@@ -7,7 +7,7 @@ from pydantic import ValidationError
 from database import Neo4jClient
 from schemas import GraphExtraction
 
-load_dotenv()
+load_dotenv(override=True)
 
 # Cliente apuntando a tu Ollama local (variables en .env o hardcoded localmente)
 client = AsyncOpenAI(
@@ -44,15 +44,22 @@ async def extract_graph(text: str) -> GraphExtraction:
 
 
 async def main():
+    # 1. Forzamos la recarga ignorando lo que haya en la memoria de la terminal
     load_dotenv(override=True)
 
+    # 2. Capturamos y LIMPIAMOS (strip) cualquier espacio invisible
     uri = os.getenv("NEO4J_URI", "").strip()
     user = os.getenv("NEO4J_USER", "").strip()
     password = os.getenv("NEO4J_PASSWORD", "").strip()
 
+    # 3. Validación de seguridad
     if not all([uri, user, password]):
-        print("❌ ERROR: Faltan variables de entorno. Revisa el archivo .env")
+        print("❌ ERROR: Faltan variables en el .env. Revísalo y guarda los cambios.")
         return
+
+    print(
+        f"DEBUG: Conectando a {uri} con usuario '{user}'"
+    )  # Para verificar visualmente
 
     db = Neo4jClient(uri, user, password)
 
