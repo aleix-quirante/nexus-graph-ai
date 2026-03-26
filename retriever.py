@@ -3,9 +3,14 @@ import os
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIModel
 from database import Neo4jClient
 
 load_dotenv()
+
+local_model = OpenAIModel(
+    "qwen2.5:32b", base_url="http://localhost:11434/v1", api_key="ollama"
+)
 
 
 class CypherResponse(BaseModel):
@@ -19,7 +24,7 @@ class CypherResponse(BaseModel):
 
 
 cypher_agent = Agent(
-    "google-gla:gemini-3.1-pro",
+    local_model,
     result_type=CypherResponse,
     system_prompt=(
         "Eres un Arquitecto de Datos B2B experto en Neo4j. "

@@ -3,12 +3,17 @@ import os
 from dotenv import load_dotenv
 from database import Neo4jClient
 from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIModel
 from schemas import GraphExtraction
 
 load_dotenv()
 
+local_model = OpenAIModel(
+    "qwen2.5:32b", base_url="http://localhost:11434/v1", api_key="ollama"
+)
+
 extractor_agent = Agent[GraphExtraction](
-    os.getenv("MODEL_NAME"),
+    local_model,
     system_prompt=(
         "Eres un arquitecto de datos especializado en Análisis de Riesgos Corporativos. "
         "Transforma el texto legal en un Grafo de Conocimiento determinista. "
