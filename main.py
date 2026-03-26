@@ -1,57 +1,65 @@
 import asyncio
 import os
+import json
 from dotenv import load_dotenv
-from database import Neo4jClient
-from pydantic_ai import Agent
-
-# NUEVAS IMPORTACIONES:
-from pydantic_ai.models.openai import OpenAIChatModel
 from openai import AsyncOpenAI
-
+from pydantic import ValidationError
+from database import Neo4jClient
 from schemas import GraphExtraction
 
 load_dotenv()
 
-# 1. Creamos el cliente asíncrono de OpenAI apuntando a tu Ollama local
-ollama_client = AsyncOpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
-
-# 2. Instanciamos el modelo usando la nueva clase y pasándole el cliente
-local_model = OpenAIChatModel("qwen2.5:14b", openai_client=ollama_client)
-
-# 3. El Agente ahora recibe el modelo configurado
-extractor_agent = Agent(
-    local_model,
-    result_type=GraphExtraction,
-    system_prompt=(
-        "Eres un arquitecto de datos especializado en Análisis de Riesgos Corporativos. "
-        "Transforma el texto legal en un Grafo de Conocimiento determinista. "
-        "Asegúrate de que los 'source_id' y 'target_id' de las relaciones apunten exactamente a los 'id' de los nodos creados."
-    ),
+# Cliente apuntando a tu Ollama local (variables en .env o hardcoded localmente)
+client = AsyncOpenAI(
+    base_url=os.getenv("OPENAI_BASE_URL", "http://localhost:11434/v1"),
+    api_key=os.getenv("OPENAI_API_KEY", "ollama-local"),
 )
 
 
-async def main():
-    client = Neo4jClient(
-        os.getenv("NEO4J_URI"), os.getenv("NEO4J_USER"), os.getenv("NEO4J_PASSWORD")
+async def extract_graph(text: str) -> GraphExtraction:
+    system_prompt = (
+        "Eres un Arquitecto de Datos B2B. Extrae entidades y relaciones del texto.\n"
+        "Debes responder ÚNICAMENTE con un JSON válido que coincida exactamente con este esquema:\n"
+        f"{GraphExtraction.model_json_schema()}"
     )
 
+    response = await client.chat.completions.create(
+        model="qwen2.5:32b",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Texto a analizar: {text}"},
+        ],
+        response_format={"type": "json_object"},
+        temperature=0.0,
+    )
+
+    raw_json = response.choices[0].message.content
     try:
-        raw_text = "TechCorp firmó un contrato de 5M con CyberDyne el 20/03/2026. Riesgo detectado: cláusula de rescisión unilateral."
-
-        print("🚀 Iniciando extracción agéntica...")
-        result = await extractor_agent.run(raw_text)
-
-        print(
-            f"✅ Extracción completada: {len(result.data.nodes)} nodos, {len(result.data.relationships)} relaciones."
+        # Validación estricta con Pydantic
+        return GraphExtraction.model_validate_json(raw_json)
+    except ValidationError as e:
+        raise ValueError(
+            f"Ollama devolvió un JSON malformado: {e}\nJSON crudo: {raw_json}"
         )
 
-        await client.add_graph_data(result.data)
-        print("💎 Grafo inyectado en Neo4j Aura con éxito.")
 
+async def main():
+    db = Neo4jClient(
+        os.getenv("NEO4J_URI"), os.getenv("NEO4J_USER"), os.getenv("NEO4J_PASSWORD")
+    )
+    try:
+        raw_text = "TechCorp firmó un contrato de 5M con CyberDyne el 20/03/2026. Riesgo detectado: cláusula de rescisión unilateral."
+        print("🚀 Iniciando extracción agéntica DIRECTA...")
+
+        extraction = await extract_graph(raw_text)
+
+        print(f"✅ Extracción completada: {len(extraction.nodes)} nodos detectados.")
+        await db.add_graph_data(extraction)
+        print("💎 Grafo inyectado en Neo4j Aura con éxito.")
     except Exception as e:
         print(f"❌ Error en el Pipeline: {str(e)}")
     finally:
-        await client.close()
+        await db.close()
 
 
 if __name__ == "__main__":
