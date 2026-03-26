@@ -45,9 +45,9 @@ async def extract_graph(text: str) -> GraphExtraction:
 
 async def main():
     db = Neo4jClient(
-        "neo4j+s://ec5b915f.databases.neo4j.io",
-        "neo4j",
-        "EZk2-YsvAAu2rXBajKYP38CFgknUMZp1D0LQ1rL9Lu4",
+        os.getenv("NEO4J_URI"),
+        os.getenv("NEO4J_USER"),
+        os.getenv("NEO4J_PASSWORD"),
     )
     try:
         raw_text = "TechCorp firmó un contrato de 5M con CyberDyne el 20/03/2026. Riesgo detectado: cláusula de rescisión unilateral."
