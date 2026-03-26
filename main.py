@@ -7,9 +7,8 @@ from schemas import GraphExtraction
 
 load_dotenv()
 
-extractor_agent = Agent(
-    "google-gla:gemini-3.1-flash",
-    result_type=GraphExtraction,
+extractor_agent = Agent[GraphExtraction](
+    os.getenv("MODEL_NAME"),
     system_prompt=(
         "Eres un arquitecto de datos especializado en Análisis de Riesgos Corporativos. "
         "Transforma el texto legal en un Grafo de Conocimiento determinista. "
