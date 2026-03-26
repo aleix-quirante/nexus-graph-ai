@@ -2,30 +2,49 @@ import asyncio
 import os
 from dotenv import load_dotenv
 from database import Neo4jClient
+from pydantic_ai import Agent
 
-# Cargar variables de entorno
+# Asumimos que creamos este archivo para los modelos de datos
+from schemas import GraphExtraction
+
 load_dotenv()
+
+# 1. Definición del Agente Extractor (El "Cerebro")
+# En 2026, este agente es el que factura los $5,000
+extractor_agent = Agent(
+    "google-gla:gemini-3.1-flash",
+    result_type=GraphExtraction,
+    system_prompt=(
+        "Eres un experto en Análisis de Riesgos Corporativos. "
+        "Tu misión es transformar texto legal en un Grafo de Conocimiento. "
+        "Identifica EMPRESAS, CONTRATOS y RIESGOS. Define relaciones claras."
+    ),
+)
 
 
 async def main():
-    # Setup de variables
-    uri = os.getenv("NEO4J_URI", "bolt://localhost:7687")
-    user = os.getenv("NEO4J_USER", "neo4j")
-    password = os.getenv("NEO4J_PASSWORD", "password")
-
-    print("Inicializando Neo4jClient...")
-    client = Neo4jClient(uri, user, password)
+    client = Neo4jClient(
+        os.getenv("NEO4J_URI"), os.getenv("NEO4J_USER"), os.getenv("NEO4J_PASSWORD")
+    )
 
     try:
-        # Aquí iría el código de extracción usando Pydantic AI
-        # extraction = extractor.extract_from_text("...")
-        # await client.add_graph_data(extraction)
-        print(
-            "Pipeline de extracción listo. Configura los modelos y datos para procesar."
-        )
+        # SIMULACIÓN DE DATA REAL (Aquí podrías leer un PDF)
+        raw_text = "TechCorp firmó un contrato de 5M con CyberDyne el 20/03/2026. Riesgo detectado: cláusula de rescisión unilateral."
+
+        print("🚀 Iniciando extracción agéntica...")
+        # El agente razona y devuelve un objeto validado por Pydantic
+        result = await extractor_agent.run(raw_text)
+
+        print(f"✅ Extracción completada: {len(result.data.nodes)} nodos detectados.")
+
+        # Inserción real en Neo4j Aura
+        await client.add_graph_data(result.data)
+        print("💎 Grafo actualizado en la nube con éxito.")
+
+    except Exception as e:
+        print(f"❌ Error en el Pipeline: {str(e)}")
     finally:
         await client.close()
-        print("Conexión cerrada.")
 
 
 if __name__ == "__main__":
