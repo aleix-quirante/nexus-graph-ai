@@ -1,0 +1,1 @@
+Actúa como Senior AI Architect. Para este proyecto NexusGraph, usa Pydantic AI para toda la extracción de datos. Cada vez que generes un nodo o relación, valida que cumpla con el esquema definido. Si vas a insertar datos en Neo4j, usa el driver oficial y asegúrate de gestionar las sesiones de forma asíncrona. Prioriza modelos con razonamiento (o3-mini o Gemini 3.1 Flash).

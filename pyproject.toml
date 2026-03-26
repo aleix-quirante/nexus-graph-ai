@@ -1,0 +1,11 @@
+[project]
+name = "nexus-graph-ai"
+version = "0.1.0"
+description = "Graph AI Extractor with Pydantic AI and Neo4j"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic-ai",
+    "neo4j",
+    "python-dotenv"
+]
