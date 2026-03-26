@@ -48,18 +48,16 @@ async def main():
     load_dotenv(override=True)
 
     # 2. Capturamos y LIMPIAMOS (strip) cualquier espacio invisible
-    uri = os.getenv("NEO4J_URI", "").strip()
-    user = os.getenv("NEO4J_USER", "").strip()
-    password = os.getenv("NEO4J_PASSWORD", "").strip()
+    uri = os.getenv("NEO4J_URI", "").strip().replace('"', "").replace("'", "")
+    user = os.getenv("NEO4J_USER", "").strip().replace('"', "").replace("'", "")
+    password = os.getenv("NEO4J_PASSWORD", "").strip().replace('"', "").replace("'", "")
 
     # 3. Validación de seguridad
     if not all([uri, user, password]):
         print("❌ ERROR: Faltan variables en el .env. Revísalo y guarda los cambios.")
         return
 
-    print(
-        f"DEBUG: Conectando a {uri} con usuario '{user}'"
-    )  # Para verificar visualmente
+    print(f"DEBUG: URI='{uri}' | USER='{user}' | PASS_LEN={len(password)}")
 
     db = Neo4jClient(uri, user, password)
 
