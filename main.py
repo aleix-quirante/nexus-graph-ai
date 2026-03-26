@@ -3,17 +3,25 @@ import os
 from dotenv import load_dotenv
 from database import Neo4jClient
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
+
+# NUEVAS IMPORTACIONES:
+from pydantic_ai.models.openai import OpenAIChatModel
+from openai import AsyncOpenAI
+
 from schemas import GraphExtraction
 
 load_dotenv()
 
-local_model = OpenAIModel(
-    "qwen2.5:32b", base_url="http://localhost:11434/v1", api_key="ollama"
-)
+# 1. Creamos el cliente asíncrono de OpenAI apuntando a tu Ollama local
+ollama_client = AsyncOpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
 
-extractor_agent = Agent[GraphExtraction](
+# 2. Instanciamos el modelo usando la nueva clase y pasándole el cliente
+local_model = OpenAIChatModel("qwen2.5:14b", openai_client=ollama_client)
+
+# 3. El Agente ahora recibe el modelo configurado
+extractor_agent = Agent(
     local_model,
+    result_type=GraphExtraction,
     system_prompt=(
         "Eres un arquitecto de datos especializado en Análisis de Riesgos Corporativos. "
         "Transforma el texto legal en un Grafo de Conocimiento determinista. "

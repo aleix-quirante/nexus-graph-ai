@@ -3,14 +3,19 @@ import os
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
 from database import Neo4jClient
+
+# NUEVAS IMPORTACIONES:
+from pydantic_ai.models.openai import OpenAIChatModel
+from openai import AsyncOpenAI
 
 load_dotenv()
 
-local_model = OpenAIModel(
-    "qwen2.5:32b", base_url="http://localhost:11434/v1", api_key="ollama"
-)
+# 1. Mismo cliente asíncrono
+ollama_client = AsyncOpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
+
+# 2. Mismo modelo configurado
+local_model = OpenAIChatModel("qwen2.5:14b", openai_client=ollama_client)
 
 
 class CypherResponse(BaseModel):
@@ -23,6 +28,7 @@ class CypherResponse(BaseModel):
     )
 
 
+# 3. Instanciamos el agente de Cypher
 cypher_agent = Agent(
     local_model,
     result_type=CypherResponse,
