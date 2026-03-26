@@ -44,14 +44,21 @@ async def extract_graph(text: str) -> GraphExtraction:
 
 
 async def main():
-    db = Neo4jClient(
-        os.getenv("NEO4J_URI"),
-        os.getenv("NEO4J_USER"),
-        os.getenv("NEO4J_PASSWORD"),
-    )
+    load_dotenv(override=True)
+
+    uri = os.getenv("NEO4J_URI", "").strip()
+    user = os.getenv("NEO4J_USER", "").strip()
+    password = os.getenv("NEO4J_PASSWORD", "").strip()
+
+    if not all([uri, user, password]):
+        print("❌ ERROR: Faltan variables de entorno. Revisa el archivo .env")
+        return
+
+    db = Neo4jClient(uri, user, password)
+
     try:
         raw_text = "TechCorp firmó un contrato de 5M con CyberDyne el 20/03/2026. Riesgo detectado: cláusula de rescisión unilateral."
-        print("🚀 Iniciando extracción agéntica DIRECTA...")
+        print(f"🚀 Iniciando extracción agéntica DIRECTA en {uri}...")
 
         extraction = await extract_graph(raw_text)
 
