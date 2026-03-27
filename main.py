@@ -1,3 +1,4 @@
+import sys
 import asyncio
 import os
 import json
@@ -19,6 +20,7 @@ client = AsyncOpenAI(
 async def extract_graph(text: str) -> GraphExtraction:
     system_prompt = (
         "Eres un Arquitecto de Datos B2B. Extrae entidades y relaciones del texto.\n"
+        "Asegúrate de crear etiquetas nuevas como EMPLEADO, EQUIPO, LICENCIA si el texto lo requiere.\n"
         "Debes responder ÚNICAMENTE con un JSON válido que coincida exactamente con este esquema:\n"
         f"{GraphExtraction.model_json_schema()}"
     )
@@ -45,7 +47,11 @@ async def extract_graph(text: str) -> GraphExtraction:
 
 async def main():
     try:
-        raw_text = "TechCorp firmó un contrato de 5M con CyberDyne el 20/03/2026. Riesgo detectado: cláusula de rescisión unilateral."
+        if len(sys.argv) > 1:
+            with open(sys.argv[1], "r", encoding="utf-8") as f:
+                raw_text = f.read()
+        else:
+            raw_text = "TechCorp firmó un contrato de 5M con CyberDyne el 20/03/2026. Riesgo detectado: cláusula de rescisión unilateral."
         print("🚀 Iniciando extracción agéntica DIRECTA...")
 
         extraction = await extract_graph(raw_text)

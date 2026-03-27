@@ -18,6 +18,33 @@ class Neo4jClient:
             print(f"❌ Fallo de autenticación en el Client: {e}")
             return False
 
+    def clear_database(self):
+        with self.driver.session() as session:
+            session.run("MATCH (n) DETACH DELETE n")
+        print("🗑️ Base de datos limpiada correctamente.")
+
+    def get_schema_snapshot(self):
+        with self.driver.session() as session:
+            labels = [
+                record["label"]
+                for record in session.run("CALL db.labels() YIELD label")
+            ]
+            relationships = [
+                record["relationshipType"]
+                for record in session.run(
+                    "CALL db.relationshipTypes() YIELD relationshipType"
+                )
+            ]
+            properties = [
+                record["propertyKey"]
+                for record in session.run("CALL db.propertyKeys() YIELD propertyKey")
+            ]
+            return {
+                "labels": labels,
+                "relationships": relationships,
+                "properties": properties,
+            }
+
     def close(self):
         self.driver.close()
 
