@@ -26,6 +26,8 @@ client = AsyncOpenAI(
 async def extract_graph(text: str) -> GraphExtraction:
     system_prompt = (
         "Eres un Arquitecto de Datos B2B. Extrae entidades y relaciones del texto.\n"
+        "Extrae de forma agresiva: Personas, Empresas, Pedidos, Productos, Riesgos y Montos. Si ves un nombre propio, es un nodo. Si ves una cifra de dinero, es una propiedad.\n"
+        "PROHIBIDO usar etiquetas de una sola letra como 'e'. Obligatoriamente usa etiquetas completas y descriptivas como 'EMPRESA', 'PEDIDO', 'RIESGO'.\n"
         "Asegúrate de crear etiquetas nuevas como EMPLEADO, EQUIPO, LICENCIA si el texto lo requiere.\n"
         "Debes responder ÚNICAMENTE con un JSON válido que coincida exactamente con este esquema:\n"
         f"{GraphExtraction.model_json_schema()}"
@@ -43,6 +45,12 @@ async def extract_graph(text: str) -> GraphExtraction:
 
     raw_json = response.choices[0].message.content
     try:
+        # Extract json between { and }
+        start_idx = raw_json.find("{")
+        end_idx = raw_json.rfind("}")
+        if start_idx != -1 and end_idx != -1 and end_idx >= start_idx:
+            raw_json = raw_json[start_idx : end_idx + 1]
+
         # Validación estricta con Pydantic
         return GraphExtraction.model_validate_json(raw_json)
     except ValidationError as e:
@@ -54,10 +62,16 @@ async def extract_graph(text: str) -> GraphExtraction:
 async def main():
     try:
         if len(sys.argv) > 1:
-            with open(sys.argv[1], "r", encoding="utf-8") as f:
-                raw_text = f.read()
+            file_path = sys.argv[1]
+            with open(file_path, "r", encoding="utf-8") as f:
+                raw_text = f.read().strip()
+
+            if not raw_text:
+                raise ValueError("El archivo está vacío o solo contiene espacios.")
         else:
             raw_text = "TechCorp firmó un contrato de 5M con CyberDyne el 20/03/2026. Riesgo detectado: cláusula de rescisión unilateral."
+
+        print(f"Texto a procesar:\n{raw_text}\n")
         print("🚀 Iniciando extracción agéntica DIRECTA...")
 
         extraction = await extract_graph(raw_text)

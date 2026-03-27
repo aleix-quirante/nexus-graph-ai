@@ -7,6 +7,15 @@ from pydantic_ai import Agent
 from core.database import Neo4jClient
 
 
+SCHEMA_MAP = {
+    "empresa": ["e", "EMPRESA", "CLIENTE"],
+    "proveedor": ["e", "EMPRESA", "CLIENTE"],
+    "cliente": ["e", "EMPRESA", "CLIENTE"],
+    "nombre": ["id", "nombre", "name"],
+    "quién": ["id", "nombre", "name"],
+}
+
+
 class CypherResponse(BaseModel):
     query: str = Field(
         ...,
@@ -47,7 +56,14 @@ class GraphQueryEngine:
                     f"Nodos detectados: {schema['labels']}\n"
                     f"Relaciones detectadas: {schema['relationships']}\n"
                     f"Propiedades disponibles: {schema['properties']}\n"
-                    "Genera la consulta basada estrictamente en este esquema. Usa solo estas etiquetas en MAYÚSCULAS."
+                    "Genera la consulta basada estrictamente en este esquema. Usa solo estas etiquetas en MAYÚSCULAS.\n"
+                    "REGLAS CRÍTICAS:\n"
+                    "1. Si no estás seguro de la etiqueta (Label) de un nodo, usa una búsqueda genérica (n {nombre: 'VALOR'}) en lugar de forzar una etiqueta como :RIESGO o :EMPRESA.\n"
+                    "2. Para preguntas sobre 'qué material', 'qué pedido' o 'qué pasa con...', busca relaciones directas de 1 o 2 saltos desde el nombre mencionado. No inventes caminos largos si no aparecen en el esquema.\n"
+                    "3. Usa 'CONTAINS' o comparaciones flexibles (ej. toLower) o busca por 'id' si el nombre exacto puede variar o ser parcial.\n"
+                    "4. Instrucción: Se ha detectado que algunas empresas se guardan con la etiqueta 'e' y los nombres en la propiedad 'id'. Si buscas una empresa o proveedor, consulta SIEMPRE la etiqueta 'e' y la propiedad 'id' además de las estándar.\n"
+                    f"   Mapa de esquemas sugerido: {SCHEMA_MAP}\n"
+                    "   Ejemplo de búsqueda reforzada: MATCH (n) WHERE (n:e OR n:EMPRESA) AND (toLower(n.id) CONTAINS 'valor' OR toLower(n.nombre) CONTAINS 'valor')"
                 ),
             )
 
