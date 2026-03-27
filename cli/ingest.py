@@ -5,7 +5,13 @@ import json
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from pydantic import ValidationError
-from database import Neo4jClient
+import sys
+import os
+
+# Ensure the root directory is in the path to import core correctly
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from core.database import Neo4jClient
 from schemas import GraphExtraction
 
 load_dotenv(override=True)
