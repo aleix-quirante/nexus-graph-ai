@@ -44,36 +44,46 @@ async def extract_graph(text: str) -> GraphExtraction:
 
 
 async def main():
-    # 1. Forzamos la recarga ignorando lo que haya en la memoria de la terminal
-    load_dotenv(override=True)
-
-    # 2. Capturamos y LIMPIAMOS (strip) cualquier espacio invisible
-    uri = os.getenv("NEO4J_URI", "").strip().replace('"', "").replace("'", "")
-    user = os.getenv("NEO4J_USER", "").strip().replace('"', "").replace("'", "")
-    password = os.getenv("NEO4J_PASSWORD", "").strip().replace('"', "").replace("'", "")
-
-    # 3. Validación de seguridad
-    if not all([uri, user, password]):
-        print("❌ ERROR: Faltan variables en el .env. Revísalo y guarda los cambios.")
-        return
-
-    print(f"DEBUG: URI='{uri}' | USER='{user}' | PASS_LEN={len(password)}")
-
-    db = Neo4jClient(uri, user, password)
-
     try:
         raw_text = "TechCorp firmó un contrato de 5M con CyberDyne el 20/03/2026. Riesgo detectado: cláusula de rescisión unilateral."
-        print(f"🚀 Iniciando extracción agéntica DIRECTA en {uri}...")
+        print("🚀 Iniciando extracción agéntica DIRECTA...")
 
         extraction = await extract_graph(raw_text)
 
         print(f"✅ Extracción completada: {len(extraction.nodes)} nodos detectados.")
-        await db.add_graph_data(extraction)
-        print("💎 Grafo inyectado en Neo4j Aura con éxito.")
+
+        # 1. Forzamos la recarga ignorando lo que haya en la memoria de la terminal
+        load_dotenv(override=True)
+
+        # 2. Capturamos y LIMPIAMOS (strip) cualquier espacio invisible
+        uri = os.getenv("NEO4J_URI", "").strip().replace('"', "").replace("'", "")
+        user = os.getenv("NEO4J_USER", "").strip().replace('"', "").replace("'", "")
+        password = (
+            os.getenv("NEO4J_PASSWORD", "").strip().replace('"', "").replace("'", "")
+        )
+
+        # 3. Validación de seguridad
+        if not all([uri, user, password]):
+            print(
+                "❌ ERROR: Faltan variables en el .env. Revísalo y guarda los cambios."
+            )
+            return
+
+        print(f"DEBUG: URI='{uri}' | USER='{user}' | PASS_LEN={len(password)}")
+        print(
+            f"DEBUG FINAL: Intentando inyectar en {uri} con pass de {len(password)} caracteres."
+        )
+
+        db = Neo4jClient(uri, user, password)
+
+        try:
+            db.check_connection()
+            db.add_graph_data(extraction)
+            print("💎 Grafo inyectado en Neo4j Aura con éxito.")
+        finally:
+            db.close()
     except Exception as e:
         print(f"❌ Error en el Pipeline: {str(e)}")
-    finally:
-        await db.close()
 
 
 if __name__ == "__main__":
