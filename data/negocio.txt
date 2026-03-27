@@ -1,0 +1,1 @@
+El cliente 'Construcciones Aleix' tiene un pedido de 50 vigas de acero de 6 metros. El proveedor es 'Hierros del Vallès', pero nos han notificado un retraso por falta de camiones. El comercial que lleva la cuenta es Carlos Ruiz. El presupuesto es de 8.500€ y el margen neto esperado es del 15%. Carlos dice que el cliente está empezando a enfadarse por el retraso.

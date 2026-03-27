@@ -5,15 +5,7 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 from core.database import Neo4jClient
-
-
-SCHEMA_MAP = {
-    "empresa": ["e", "EMPRESA", "CLIENTE"],
-    "proveedor": ["e", "EMPRESA", "CLIENTE"],
-    "cliente": ["e", "EMPRESA", "CLIENTE"],
-    "nombre": ["id", "nombre", "name"],
-    "quién": ["id", "nombre", "name"],
-}
+from core.schema_map import SCHEMA_MAP
 
 
 class CypherResponse(BaseModel):
@@ -52,18 +44,24 @@ class GraphQueryEngine:
                 "openai:qwen2.5:32b",
                 output_type=CypherResponse,
                 system_prompt=(
-                    "Eres un experto en Cypher. El esquema actual de la base de datos es:\n"
+                    "Eres un experto en Cypher. Cuentas con un SCHEMA_MAP que define que EMPRESA puede aparecer como e, PROVEEDOR o CLIENTE. "
+                    "Al generar la consulta, si el usuario pregunta por una empresa, busca en todas esas etiquetas.\n"
+                    f"SCHEMA_MAP de referencia: {SCHEMA_MAP}\n\n"
+                    "El esquema actual de la base de datos es:\n"
                     f"Nodos detectados: {schema['labels']}\n"
                     f"Relaciones detectadas: {schema['relationships']}\n"
                     f"Propiedades disponibles: {schema['properties']}\n"
-                    "Genera la consulta basada estrictamente en este esquema. Usa solo estas etiquetas en MAYÚSCULAS.\n"
+                    "Genera la consulta basada estrictamente en este esquema.\n"
                     "REGLAS CRÍTICAS:\n"
-                    "1. Si no estás seguro de la etiqueta (Label) de un nodo, usa una búsqueda genérica (n {nombre: 'VALOR'}) en lugar de forzar una etiqueta como :RIESGO o :EMPRESA.\n"
-                    "2. Para preguntas sobre 'qué material', 'qué pedido' o 'qué pasa con...', busca relaciones directas de 1 o 2 saltos desde el nombre mencionado. No inventes caminos largos si no aparecen en el esquema.\n"
-                    "3. Usa 'CONTAINS' o comparaciones flexibles (ej. toLower) o busca por 'id' si el nombre exacto puede variar o ser parcial.\n"
-                    "4. Instrucción: Se ha detectado que algunas empresas se guardan con la etiqueta 'e' y los nombres en la propiedad 'id'. Si buscas una empresa o proveedor, consulta SIEMPRE la etiqueta 'e' y la propiedad 'id' además de las estándar.\n"
-                    f"   Mapa de esquemas sugerido: {SCHEMA_MAP}\n"
-                    "   Ejemplo de búsqueda reforzada: MATCH (n) WHERE (n:e OR n:EMPRESA) AND (toLower(n.id) CONTAINS 'valor' OR toLower(n.nombre) CONTAINS 'valor')"
+                    "1. Búsqueda Infalible: La consulta generada debe ser flexible y resistente a fallos de caracteres. Usa SIEMPRE una sola palabra clave (la más distintiva del nombre, ej. si es 'Construcciones Aleix', usa SOLO 'aleix'). Nunca busques el nombre entero con espacios. Usa: "
+                    "WHERE toLower(n.id) CONTAINS 'aleix' OR toLower(n.nombre) CONTAINS 'aleix'.\n"
+                    "2. Para preguntas sobre 'qué material', 'qué pedido' o 'qué pasa con...', busca relaciones bidireccionales genéricas (ej. MATCH (e:EMPRESA)-[r]-(p:PEDIDO)). Esto evita fallos de dirección o saltos variables. Ten en cuenta que en este esquema, el nodo de tipo PEDIDO representa tanto el pedido como el material en sí mismo (ej. 'pedido_vigas_acero').\n"
+                    "3. Usa comodines o nodos genéricos sin dirección (MATCH (n)-[r]-(m)) cuando no sepas exactamente qué etiqueta tiene o si puede haber varias relaciones. Ejemplo: MATCH (n)-[r]-(m) WHERE toLower(n.id) CONTAINS toLower('aleix') RETURN n, r, m\n"
+                    "4. SINTAXIS CYPHER: NUNCA uses llaves para las etiquetas de los nodos. Las etiquetas de los nodos van sin llaves ni comillas. Ejemplo CORRECTO: (e:EMPRESA). Ejemplo INCORRECTO: (e:{EMPRESA}).\n"
+                    "5. NUNCA uses expresiones de ruta de longitud variable con tipos múltiples (como `[:A|B*1..2]`), ya que puede causar errores sintácticos o retornos vacíos en algunas bases de datos. Si necesitas ambos, simplemente usa `-[r]-` y filtra después si es necesario.\n"
+                    "6. REGLA ABSOLUTA DE SINTAXIS PARA PROPIEDADES: NUNCA USES `EXISTS(variable.propiedad)` ni `exists(variable.propiedad)`. Está prohibido y obsoleto en Neo4j. Usa SIEMPRE `variable.propiedad IS NOT NULL` en su lugar.\n"
+                    "7. NO BUSQUES LITERALES INÚTILES. NUNCA HAGAS UN WHERE CON `operacion`, `proyecto` O `presupuesto` (ni en IDs, ni en nombres, ni en tipos de relación). Las operaciones, proyectos y presupuestos están modelados mediante las propiedades (ej. `n.monto`). Si preguntan por dinero o presupuesto, busca TODOS los nodos que tengan `monto`. Ejemplo EXACTO y ÚNICO a generar: `MATCH (n) WHERE n.monto IS NOT NULL RETURN n.id, n.monto`.\n"
+                    "8. NO INVENTES PROPIEDADES O RELACIONES EN EL MATCH. Retorna solo las que sabemos que existen según el esquema. Si buscas dinero, usa la propiedad `n.monto`, NO busques una relación `[:PRESUPUESTO]` ni hagas un `WHERE r.tipo CONTAINS 'presupuesto'`.\n"
                 ),
             )
 

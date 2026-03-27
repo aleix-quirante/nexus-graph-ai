@@ -5,13 +5,17 @@ import json
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from pydantic import ValidationError
-import sys
-import os
 
 # Ensure the root directory is in the path to import core correctly
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from core.database import Neo4jClient
+from core.schema_map import (
+    get_mapped_label,
+    PRIMARY_IDENTITY_PROPERTY,
+    SCHEMA_MAP,
+    get_standard_rel,
+)
 from schemas import GraphExtraction
 
 load_dotenv(override=True)
@@ -24,11 +28,19 @@ client = AsyncOpenAI(
 
 
 async def extract_graph(text: str) -> GraphExtraction:
+    valid_labels = ", ".join(list(SCHEMA_MAP["labels"].keys()))
+    valid_rels = ", ".join(list(SCHEMA_MAP["relationships"].keys()))
+
     system_prompt = (
         "Eres un Arquitecto de Datos B2B. Extrae entidades y relaciones del texto.\n"
-        "Extrae de forma agresiva: Personas, Empresas, Pedidos, Productos, Riesgos y Montos. Si ves un nombre propio, es un nodo. Si ves una cifra de dinero, es una propiedad.\n"
-        "PROHIBIDO usar etiquetas de una sola letra como 'e'. Obligatoriamente usa etiquetas completas y descriptivas como 'EMPRESA', 'PEDIDO', 'RIESGO'.\n"
-        "Asegúrate de crear etiquetas nuevas como EMPLEADO, EQUIPO, LICENCIA si el texto lo requiere.\n"
+        "Extrae de forma agresiva: Personas, Empresas, Pedidos, Productos, Riesgos y Montos. Si ves un nombre propio, es un nodo. Si ves una cifra de dinero (presupuesto, coste, etc.), métela obligatoriamente como propiedad (ej. 'monto') dentro del nodo del PEDIDO o PROYECTO correspondiente.\n"
+        "PROHIBIDO usar etiquetas de una sola letra como 'e'.\n"
+        f"Obligatoriamente usa etiquetas completas y descriptivas basadas en este esquema de nodos: {valid_labels}.\n"
+        f"Obligatoriamente usa tipos de relaciones basados en este esquema de relaciones: {valid_rels}.\n"
+        "Si el texto menciona términos como 'empresa', 'cliente', 'proveedor', mapealos a 'EMPRESA'.\n"
+        "Si menciona 'pedido', 'vigas', 'material', mapealos a 'PEDIDO'.\n"
+        "Asegúrate de crear etiquetas nuevas como EMPLEADO, EQUIPO, LICENCIA si el texto lo requiere, pero prioriza el esquema proporcionado.\n"
+        "Asegúrate de mapear las relaciones a los tipos estándar permitidos.\n"
         "Debes responder ÚNICAMENTE con un JSON válido que coincida exactamente con este esquema:\n"
         f"{GraphExtraction.model_json_schema()}"
     )
@@ -76,7 +88,48 @@ async def main():
 
         extraction = await extract_graph(raw_text)
 
-        print(f"✅ Extracción completada: {len(extraction.nodes)} nodos detectados.")
+        print(
+            f"✅ Extracción completada: {len(extraction.nodes)} nodos detectados originales."
+        )
+
+        # Limpieza e integración con schema_map
+        id_map = {}
+        for node in extraction.nodes:
+            old_id = node.id
+
+            # Obtener el nombre, priorizando la propiedad 'nombre' o usando el id
+            raw_name = str(node.properties.get("nombre", old_id))
+
+            # Limpiar comillas simples o dobles
+            clean_name = raw_name.replace("'", "").replace('"', "")
+
+            # El valor del nombre se guarda SIEMPRE en la propiedad id (PRIMARY_IDENTITY_PROPERTY)
+            # y, por redundancia, también en nombre
+            new_id = clean_name
+            id_map[old_id] = new_id
+
+            node.id = new_id
+            node.properties[PRIMARY_IDENTITY_PROPERTY] = new_id
+            node.properties["nombre"] = new_id
+
+            # Mapear a la etiqueta correcta
+            node.label = get_mapped_label(node.label)
+
+        for rel in extraction.relationships:
+            # Mapear a la relación correcta
+            rel.type = get_standard_rel(rel.type)
+
+            # Actualizar IDs en relaciones y limpiar comillas
+            rel.source_id = (
+                id_map.get(rel.source_id, rel.source_id)
+                .replace("'", "")
+                .replace('"', "")
+            )
+            rel.target_id = (
+                id_map.get(rel.target_id, rel.target_id)
+                .replace("'", "")
+                .replace('"', "")
+            )
 
         # 1. Forzamos la recarga ignorando lo que haya en la memoria de la terminal
         load_dotenv(override=True)

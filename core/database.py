@@ -67,7 +67,8 @@ class Neo4jClient:
     @staticmethod
     def _merge_edge(tx, rel):
         query = (
-            "MATCH (a {id: $source_id}), (b {id: $target_id}) "
+            f"MATCH (a {{id: $source_id}}), (b {{id: $target_id}}) "
+            f"WITH a, b LIMIT 1 "
             f"MERGE (a)-[r:{rel.type}]->(b) "
             "SET r += $props"
         )

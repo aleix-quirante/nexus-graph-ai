@@ -20,6 +20,10 @@ async def chat_loop():
             elif user_input.strip() == "/clear":
                 print("\033[H\033[J", end="")
                 continue
+            elif user_input.strip() == "/clear_db":
+                engine.client.clear_database()
+                print("🗑️ Grafo borrado.")
+                continue
             elif not user_input.strip():
                 continue
 
