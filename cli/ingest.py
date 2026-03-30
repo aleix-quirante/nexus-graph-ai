@@ -18,7 +18,7 @@ from core.schema_map import (
     SCHEMA_MAP,
     get_standard_rel,
 )
-from schemas import GraphExtraction
+from core.schemas import GraphExtraction
 
 load_dotenv(override=True)
 
