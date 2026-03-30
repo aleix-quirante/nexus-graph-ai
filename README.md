@@ -50,6 +50,11 @@ nexus-graph-ai/
 ├── data/               # Documentos fuente
 │   ├── empleados.txt   # Ejemplos HR
 │   └── negocio.txt     # Ejemplos B2B (Logística y Presupuestos)
+├── tests/              # Pruebas automatizadas
+│   ├── test_basico.py  # Pruebas básicas
+│   ├── test_stress.py  # Pruebas de estrés
+│   ├── test_conn.py    # Pruebas de conexión
+│   └── test_qa.py      # Pruebas de QA
 ├── schemas.py          # Validación Pydantic (GraphExtraction, Node, Relationship)
 ├── chat.py             # Interfaz interactiva de consola
 ├── requirements.txt    # Dependencias
