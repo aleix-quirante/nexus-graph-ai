@@ -2,9 +2,11 @@ import sys
 import asyncio
 import os
 import json
+import glob
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from pydantic import ValidationError
+import fitz  # PyMuPDF
 
 # Ensure the root directory is in the path to import core correctly
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -71,96 +73,147 @@ async def extract_graph(text: str) -> GraphExtraction:
         )
 
 
-async def main():
-    try:
-        if len(sys.argv) > 1:
-            file_path = sys.argv[1]
-            with open(file_path, "r", encoding="utf-8") as f:
-                raw_text = f.read().strip()
+def clean_pdf_text(text: str) -> str:
+    # Remove weird line breaks but keep paragraph structure mostly
+    # Replace multiple spaces or newlines
+    lines = text.split("\n")
+    cleaned_lines = [line.strip() for line in lines if line.strip()]
+    return " ".join(cleaned_lines)
 
-            if not raw_text:
-                raise ValueError("El archivo está vacío o solo contiene espacios.")
-        else:
-            raw_text = "TechCorp firmó un contrato de 5M con CyberDyne el 20/03/2026. Riesgo detectado: cláusula de rescisión unilateral."
 
-        print(f"Texto a procesar:\n{raw_text}\n")
-        print("🚀 Iniciando extracción agéntica DIRECTA...")
+def get_files_to_process(path: str) -> list[str]:
+    files = []
+    if os.path.isfile(path):
+        if path.lower().endswith((".txt", ".pdf")):
+            files.append(path)
+    elif os.path.isdir(path):
+        for ext in ("*.txt", "*.pdf"):
+            files.extend(glob.glob(os.path.join(path, f"**/{ext}"), recursive=True))
+    return files
 
-        extraction = await extract_graph(raw_text)
 
-        print(
-            f"✅ Extracción completada: {len(extraction.nodes)} nodos detectados originales."
+def extract_text_from_file(file_path: str) -> str:
+    if file_path.lower().endswith(".pdf"):
+        text = ""
+        with fitz.open(file_path) as doc:
+            for page in doc:
+                text += page.get_text()
+        return clean_pdf_text(text)
+    else:
+        with open(file_path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+
+
+def chunk_text(text: str, max_words=2000) -> list[str]:
+    words = text.split()
+    chunks = []
+    for i in range(0, len(words), max_words):
+        chunks.append(" ".join(words[i : i + max_words]))
+    return chunks
+
+
+def process_extraction_results(extraction: GraphExtraction):
+    id_map = {}
+    for node in extraction.nodes:
+        old_id = node.id
+        raw_name = str(node.properties.get("nombre", old_id))
+        clean_name = raw_name.replace("'", "").replace('"', "")
+        new_id = clean_name
+        id_map[old_id] = new_id
+
+        node.id = new_id
+        node.properties[PRIMARY_IDENTITY_PROPERTY] = new_id
+        node.properties["nombre"] = new_id
+        node.label = get_mapped_label(node.label)
+
+    for rel in extraction.relationships:
+        rel.type = get_standard_rel(rel.type)
+        rel.source_id = (
+            id_map.get(rel.source_id, rel.source_id).replace("'", "").replace('"', "")
+        )
+        rel.target_id = (
+            id_map.get(rel.target_id, rel.target_id).replace("'", "").replace('"', "")
         )
 
-        # Limpieza e integración con schema_map
-        id_map = {}
-        for node in extraction.nodes:
-            old_id = node.id
+    return extraction
 
-            # Obtener el nombre, priorizando la propiedad 'nombre' o usando el id
-            raw_name = str(node.properties.get("nombre", old_id))
 
-            # Limpiar comillas simples o dobles
-            clean_name = raw_name.replace("'", "").replace('"', "")
-
-            # El valor del nombre se guarda SIEMPRE en la propiedad id (PRIMARY_IDENTITY_PROPERTY)
-            # y, por redundancia, también en nombre
-            new_id = clean_name
-            id_map[old_id] = new_id
-
-            node.id = new_id
-            node.properties[PRIMARY_IDENTITY_PROPERTY] = new_id
-            node.properties["nombre"] = new_id
-
-            # Mapear a la etiqueta correcta
-            node.label = get_mapped_label(node.label)
-
-        for rel in extraction.relationships:
-            # Mapear a la relación correcta
-            rel.type = get_standard_rel(rel.type)
-
-            # Actualizar IDs en relaciones y limpiar comillas
-            rel.source_id = (
-                id_map.get(rel.source_id, rel.source_id)
-                .replace("'", "")
-                .replace('"', "")
+async def process_file(file_path: str, db: Neo4jClient):
+    print(f"Procesando [{os.path.basename(file_path)}]...")
+    try:
+        raw_text = extract_text_from_file(file_path)
+        if not raw_text:
+            print(
+                f"⚠️ El archivo {os.path.basename(file_path)} está vacío o no se pudo extraer texto."
             )
-            rel.target_id = (
-                id_map.get(rel.target_id, rel.target_id)
-                .replace("'", "")
-                .replace('"', "")
-            )
+            return
 
-        # 1. Forzamos la recarga ignorando lo que haya en la memoria de la terminal
+        chunks = chunk_text(raw_text, max_words=2000)
+        total_nodes = 0
+
+        for idx, chunk in enumerate(chunks):
+            if len(chunks) > 1:
+                print(f"  -> Procesando chunk {idx + 1}/{len(chunks)}...")
+
+            extraction = await extract_graph(chunk)
+            extraction = process_extraction_results(extraction)
+            total_nodes += len(extraction.nodes)
+
+            if len(extraction.nodes) > 0 or len(extraction.relationships) > 0:
+                db.add_graph_data(extraction)
+
+        print(
+            f"Procesando [{os.path.basename(file_path)}]... [{total_nodes}] entidades extraídas"
+        )
+
+    except Exception as e:
+        print(f"❌ Error procesando {os.path.basename(file_path)}: {str(e)}")
+
+
+async def main():
+    try:
+        path = None
+        if len(sys.argv) > 1:
+            path = sys.argv[1]
+        else:
+            print("❌ ERROR: Se requiere proporcionar un archivo o carpeta.")
+            print("Uso: python cli/ingest.py <archivo_o_carpeta>")
+            return
+
+        files_to_process = get_files_to_process(path)
+        if not files_to_process:
+            print(
+                f"⚠️ No se encontraron archivos .txt o .pdf en la ruta especificada: {path}"
+            )
+            return
+
+        print(
+            f"🚀 Iniciando extracción agéntica DIRECTA en {len(files_to_process)} archivo(s)..."
+        )
+
         load_dotenv(override=True)
-
-        # 2. Capturamos y LIMPIAMOS (strip) cualquier espacio invisible
         uri = os.getenv("NEO4J_URI", "").strip().replace('"', "").replace("'", "")
         user = os.getenv("NEO4J_USER", "").strip().replace('"', "").replace("'", "")
         password = (
             os.getenv("NEO4J_PASSWORD", "").strip().replace('"', "").replace("'", "")
         )
 
-        # 3. Validación de seguridad
         if not all([uri, user, password]):
             print(
                 "❌ ERROR: Faltan variables en el .env. Revísalo y guarda los cambios."
             )
             return
 
-        print(f"DEBUG: URI='{uri}' | USER='{user}' | PASS_LEN={len(password)}")
-        print(
-            f"DEBUG FINAL: Intentando inyectar en {uri} con pass de {len(password)} caracteres."
-        )
-
         db = Neo4jClient(uri, user, password)
 
         try:
             db.check_connection()
-            db.add_graph_data(extraction)
+            for file_path in files_to_process:
+                await process_file(file_path, db)
             print("💎 Grafo inyectado en Neo4j Aura con éxito.")
         finally:
             db.close()
+
     except Exception as e:
         print(f"❌ Error en el Pipeline: {str(e)}")
 
