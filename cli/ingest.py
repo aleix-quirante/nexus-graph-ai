@@ -11,7 +11,8 @@ import fitz  # PyMuPDF
 # Ensure the root directory is in the path to import core correctly
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from core.database import Neo4jClient
+from core.database import GraphRepository, Neo4jRepository
+from core.ontology import registry, ValidationPipeline
 from core.schema_map import (
     get_mapped_label,
     PRIMARY_IDENTITY_PROPERTY,
@@ -22,18 +23,14 @@ from core.schemas import GraphExtraction
 
 load_dotenv(override=True)
 
-# Cliente apuntando a tu Ollama local (variables en .env o hardcoded localmente)
-client = AsyncOpenAI(
-    base_url=os.getenv("OPENAI_BASE_URL", "http://localhost:11434/v1"),
-    api_key=os.getenv("OPENAI_API_KEY", "ollama-local"),
-)
 
-
-async def extract_graph(text: str) -> GraphExtraction:
+async def extract_graph(
+    client: AsyncOpenAI, text: str, max_retries: int = 3
+) -> GraphExtraction:
     valid_labels = ", ".join(list(SCHEMA_MAP["labels"].keys()))
     valid_rels = ", ".join(list(SCHEMA_MAP["relationships"].keys()))
 
-    system_prompt = (
+    base_system_prompt = (
         "Eres un Arquitecto de Datos B2B. Extrae entidades y relaciones del texto.\n"
         "Extrae de forma agresiva: Personas, Empresas, Pedidos, Productos, Riesgos y Montos. Si ves un nombre propio, es un nodo. Si ves una cifra de dinero (presupuesto, coste, etc.), métela obligatoriamente como propiedad (ej. 'monto') dentro del nodo del PEDIDO o PROYECTO correspondiente.\n"
         "PROHIBIDO usar etiquetas de una sola letra como 'e'.\n"
@@ -47,72 +44,49 @@ async def extract_graph(text: str) -> GraphExtraction:
         f"{GraphExtraction.model_json_schema()}"
     )
 
-    response = await client.chat.completions.create(
-        model="qwen2.5:32b",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Texto a analizar: {text}"},
-        ],
-        response_format={"type": "json_object"},
-        temperature=0.0,
-    )
+    messages = [
+        {"role": "system", "content": base_system_prompt},
+        {"role": "user", "content": f"Texto a analizar: {text}"},
+    ]
 
-    raw_json = response.choices[0].message.content
-    try:
-        # Extract json between { and }
-        start_idx = raw_json.find("{")
-        end_idx = raw_json.rfind("}")
-        if start_idx != -1 and end_idx != -1 and end_idx >= start_idx:
-            raw_json = raw_json[start_idx : end_idx + 1]
-
-        # Validación estricta con Pydantic
-        return GraphExtraction.model_validate_json(raw_json)
-    except ValidationError as e:
-        raise ValueError(
-            f"Ollama devolvió un JSON malformado: {e}\nJSON crudo: {raw_json}"
+    for attempt in range(max_retries):
+        response = await client.chat.completions.create(
+            model="qwen2.5:32b",
+            messages=messages,
+            response_format={"type": "json_object"},
+            temperature=0.0,
         )
 
+        raw_json = response.choices[0].message.content
+        try:
+            # Extract json between { and }
+            start_idx = raw_json.find("{")
+            end_idx = raw_json.rfind("}")
+            if start_idx != -1 and end_idx != -1 and end_idx >= start_idx:
+                raw_json = raw_json[start_idx : end_idx + 1]
 
-def clean_pdf_text(text: str) -> str:
-    # Remove weird line breaks but keep paragraph structure mostly
-    # Replace multiple spaces or newlines
-    lines = text.split("\n")
-    cleaned_lines = [line.strip() for line in lines if line.strip()]
-    return " ".join(cleaned_lines)
+            # Validación estricta con Pydantic
+            extraction = GraphExtraction.model_validate_json(raw_json)
 
+            # Additional validation using the ValidationPipeline
+            pipeline = ValidationPipeline(registry)
+            return pipeline.validate_extraction(extraction)
 
-def get_files_to_process(path: str) -> list[str]:
-    files = []
-    if os.path.isfile(path):
-        if path.lower().endswith((".txt", ".pdf")):
-            files.append(path)
-    elif os.path.isdir(path):
-        for ext in ("*.txt", "*.pdf"):
-            files.extend(glob.glob(os.path.join(path, f"**/{ext}"), recursive=True))
-    return files
-
-
-def extract_text_from_file(file_path: str) -> str:
-    if file_path.lower().endswith(".pdf"):
-        text = ""
-        with fitz.open(file_path) as doc:
-            for page in doc:
-                text += page.get_text()
-        return clean_pdf_text(text)
-    else:
-        with open(file_path, "r", encoding="utf-8") as f:
-            return f.read().strip()
-
-
-def chunk_text(text: str, max_words=2000) -> list[str]:
-    words = text.split()
-    chunks = []
-    for i in range(0, len(words), max_words):
-        chunks.append(" ".join(words[i : i + max_words]))
-    return chunks
+        except ValidationError as e:
+            error_msg = f"El JSON generado es inválido o no cumple el esquema. Errores:\n{e.errors()}\nJSON generado:\n{raw_json}\nCorrige los errores y devuelve ÚNICAMENTE el JSON válido."
+            print(
+                f"⚠️ [Intento {attempt + 1}/{max_retries}] Error de validación, solicitando autocorrección al LLM..."
+            )
+            messages.append({"role": "assistant", "content": raw_json})
+            messages.append({"role": "user", "content": error_msg})
+            if attempt == max_retries - 1:
+                raise ValueError(
+                    f"Fallo tras {max_retries} intentos. Último error: {e}"
+                )
 
 
 def process_extraction_results(extraction: GraphExtraction):
+    # La validación pipeline ahora se hace dentro del retry loop.
     id_map = {}
     for node in extraction.nodes:
         old_id = node.id
@@ -138,7 +112,51 @@ def process_extraction_results(extraction: GraphExtraction):
     return extraction
 
 
-async def process_file(file_path: str, db: Neo4jClient):
+def clean_pdf_text(text: str) -> str:
+    # Remove weird line breaks but keep paragraph structure mostly
+    # Replace multiple spaces or newlines
+    lines = text.split("\n")
+    cleaned_lines = [line.strip() for line in lines if line.strip()]
+    return " ".join(cleaned_lines)
+
+
+def get_files_to_process(path: str) -> list[str]:
+    files = []
+    if os.path.isfile(path):
+        if path.lower().endswith((".txt", ".pdf")):
+            files.append(path)
+    elif os.path.isdir(path):
+        for ext in ("*.txt", "*.pdf"):
+            files.extend(glob.glob(os.path.join(path, f"**/{ext}"), recursive=True))
+    return files
+
+
+def extract_text_from_file(file_path: str) -> str:
+    if file_path.lower().endswith(".pdf"):
+        text_parts = []
+        with fitz.open(file_path) as doc:
+            for page in doc:
+                blocks = page.get_text("blocks")
+                for block in blocks:
+                    block_type = block[6]
+                    if block_type == 0:  # Text block
+                        text_parts.append(block[4].strip())
+        text = "\n\n".join(text_parts)
+        return clean_pdf_text(text)
+    else:
+        with open(file_path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+
+
+def chunk_text(text: str, max_words=2000) -> list[str]:
+    words = text.split()
+    chunks = []
+    for i in range(0, len(words), max_words):
+        chunks.append(" ".join(words[i : i + max_words]))
+    return chunks
+
+
+async def process_file(file_path: str, db: GraphRepository, llm_client: AsyncOpenAI):
     print(f"Procesando [{os.path.basename(file_path)}]...")
     try:
         raw_text = extract_text_from_file(file_path)
@@ -155,7 +173,7 @@ async def process_file(file_path: str, db: Neo4jClient):
             if len(chunks) > 1:
                 print(f"  -> Procesando chunk {idx + 1}/{len(chunks)}...")
 
-            extraction = await extract_graph(chunk)
+            extraction = await extract_graph(llm_client, chunk)
             extraction = process_extraction_results(extraction)
             total_nodes += len(extraction.nodes)
 
@@ -204,15 +222,21 @@ async def main():
             )
             return
 
-        db = Neo4jClient(uri, user, password)
+        db_repository = Neo4jRepository(uri, user, password)
+
+        # Inyección del cliente de LLM
+        llm_client = AsyncOpenAI(
+            base_url=os.getenv("OPENAI_BASE_URL", "http://localhost:11434/v1"),
+            api_key=os.getenv("OPENAI_API_KEY", "ollama-local"),
+        )
 
         try:
-            db.check_connection()
+            db_repository.check_connection()
             for file_path in files_to_process:
-                await process_file(file_path, db)
-            print("💎 Grafo inyectado en Neo4j Aura con éxito.")
+                await process_file(file_path, db_repository, llm_client)
+            print("💎 Grafo inyectado en Neo4j con éxito.")
         finally:
-            db.close()
+            db_repository.close()
 
     except Exception as e:
         print(f"❌ Error en el Pipeline: {str(e)}")

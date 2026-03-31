@@ -1,0 +1,192 @@
+from typing import Any, Dict, List, Optional, Type, Set
+from pydantic import BaseModel, Field, create_model
+
+
+class EntitySchema(BaseModel):
+    name: str
+    aliases: List[str] = Field(default_factory=list)
+    description: str = ""
+    properties: Dict[str, Type] = Field(default_factory=dict)
+
+
+class RelationshipSchema(BaseModel):
+    name: str
+    aliases: List[str] = Field(default_factory=list)
+    description: str = ""
+    allowed_sources: List[str] = Field(default_factory=list)
+    allowed_targets: List[str] = Field(default_factory=list)
+
+
+class OntologyRegistry:
+    def __init__(self):
+        self._entities: Dict[str, EntitySchema] = {}
+        self._relationships: Dict[str, RelationshipSchema] = {}
+
+    def register_entity(self, schema: EntitySchema):
+        self._entities[schema.name.upper()] = schema
+
+    def register_relationship(self, schema: RelationshipSchema):
+        self._relationships[schema.name.upper()] = schema
+
+    def get_entity(self, name: str) -> Optional[EntitySchema]:
+        return self._entities.get(name.upper())
+
+    def get_relationship(self, name: str) -> Optional[RelationshipSchema]:
+        return self._relationships.get(name.upper())
+
+    def resolve_entity_label(self, raw_label: str) -> str:
+        if not raw_label:
+            return ""
+        raw_upper = raw_label.upper()
+        if raw_upper in self._entities:
+            return raw_upper
+        for name, schema in self._entities.items():
+            if raw_upper in [alias.upper() for alias in schema.aliases]:
+                return name
+        return raw_upper
+
+    def resolve_relationship_type(self, raw_type: str) -> str:
+        if not raw_type:
+            return ""
+        raw_upper = raw_type.upper()
+        if raw_upper in self._relationships:
+            return raw_upper
+        for name, schema in self._relationships.items():
+            if raw_upper in [alias.upper() for alias in schema.aliases]:
+                return name
+        return raw_upper
+
+    def generate_pydantic_models(self) -> Dict[str, Type[BaseModel]]:
+        # Generates Pydantic models for strictly validating extracted data
+        models = {}
+        for name, schema in self._entities.items():
+            fields = {
+                "id": (str, Field(..., description="Unique ID for this entity")),
+                "label": (str, Field(default=name, Literal=name)),
+                "properties": (Dict[str, Any], Field(default_factory=dict)),
+            }
+            # For strictness, one could add specific properties based on schema.properties
+            model = create_model(f"{name}Node", **fields, __base__=BaseModel)
+            models[name] = model
+        return models
+
+    def get_schema_map(self) -> Dict[str, Any]:
+        """Provides a backward-compatible schema map dict."""
+        return {
+            "labels": {name: schema.aliases for name, schema in self._entities.items()},
+            "relationships": {
+                name: schema.aliases for name, schema in self._relationships.items()
+            },
+            "properties": {
+                "id": ["nombre", "name", "identificador", "entidad"],
+                "monto": ["precio", "presupuesto", "coste", "valor"],
+                "descripcion": ["nota", "detalle", "observacion"],
+            },
+        }
+
+
+# Instantiate the global registry and populate it with default B2B domain
+registry = OntologyRegistry()
+
+registry.register_entity(
+    EntitySchema(
+        name="EMPRESA",
+        aliases=["PROVEEDOR", "CLIENTE", "SOCIEDAD"],
+        description="Business entity or company",
+    )
+)
+registry.register_entity(
+    EntitySchema(
+        name="PEDIDO",
+        aliases=["ORDEN", "ENCARGO", "PRODUCTO"],
+        description="Order or product request",
+    )
+)
+registry.register_entity(
+    EntitySchema(
+        name="RIESGO",
+        aliases=["PROBLEMA", "ALERTA", "RETRASO"],
+        description="Risk or issue",
+    )
+)
+registry.register_entity(
+    EntitySchema(
+        name="EMPLEADO",
+        aliases=["PERSONA", "COMERCIAL", "RESPONSABLE"],
+        description="Person or employee",
+    )
+)
+
+registry.register_relationship(
+    RelationshipSchema(
+        name="REALIZA_PEDIDO",
+        aliases=["HACE_PEDIDO", "TIENE_PEDIDO", "COMPRA", "SOLICITA"],
+        allowed_sources=["EMPRESA", "EMPLEADO"],
+        allowed_targets=["PEDIDO"],
+    )
+)
+registry.register_relationship(
+    RelationshipSchema(
+        name="ATIENDE_PEDIDO",
+        aliases=["TIENE_PRECIO", "SUMINISTRA", "PROVEE"],
+        allowed_sources=["EMPRESA"],
+        allowed_targets=["PEDIDO"],
+    )
+)
+registry.register_relationship(
+    RelationshipSchema(
+        name="TIENE_RIESGO",
+        aliases=["CONTIENE_RIESGO", "RIESGO_DETECTADO"],
+        allowed_sources=["PEDIDO", "EMPRESA"],
+        allowed_targets=["RIESGO"],
+    )
+)
+registry.register_relationship(
+    RelationshipSchema(
+        name="ASIGNADO_A",
+        aliases=["LLEVA_CUENTA", "RESPONSABLE_DE"],
+        allowed_sources=["PEDIDO", "EMPRESA"],
+        allowed_targets=["EMPLEADO"],
+    )
+)
+
+
+class ValidationPipeline:
+    def __init__(self, registry: OntologyRegistry):
+        self.registry = registry
+
+    def validate_extraction(self, extraction: Any) -> Any:
+        # extraction is expected to be GraphExtraction from core.schemas
+        for node in extraction.nodes:
+            node.label = self.registry.resolve_entity_label(node.label)
+
+        valid_nodes = {node.id: node.label for node in extraction.nodes}
+
+        valid_rels = []
+        for rel in extraction.relationships:
+            rel.type = self.registry.resolve_relationship_type(rel.type)
+
+            # Strict edge validation (ontology constraints)
+            rel_schema = self.registry.get_relationship(rel.type)
+            if rel_schema:
+                src_label = valid_nodes.get(rel.source_id)
+                tgt_label = valid_nodes.get(rel.target_id)
+
+                # If constraints exist, apply them
+                if (
+                    rel_schema.allowed_sources
+                    and src_label
+                    and src_label not in rel_schema.allowed_sources
+                ):
+                    continue  # Skip invalid relationship source
+                if (
+                    rel_schema.allowed_targets
+                    and tgt_label
+                    and tgt_label not in rel_schema.allowed_targets
+                ):
+                    continue  # Skip invalid relationship target
+
+            valid_rels.append(rel)
+
+        extraction.relationships = valid_rels
+        return extraction
