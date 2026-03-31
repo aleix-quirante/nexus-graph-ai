@@ -5,6 +5,11 @@ from fastapi import FastAPI, Depends
 from neo4j import AsyncGraphDatabase, AsyncDriver
 import os
 
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from core.observability import setup_observability
+
+setup_observability()
+
 
 class Database:
     driver: AsyncDriver | None = None
@@ -34,6 +39,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 app = FastAPI(lifespan=lifespan, title="Nexus Graph AI Enterprise")
+
+FastAPIInstrumentor.instrument_app(app)
 
 
 async def get_db_driver() -> AsyncGenerator[AsyncDriver, None]:
