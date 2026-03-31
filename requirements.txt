@@ -2,3 +2,6 @@ neo4j
 openai
 python-dotenv
 httpx
+pydantic
+pydantic-ai
+streamlit
