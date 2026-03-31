@@ -6,20 +6,20 @@ from pydantic_ai import Agent
 
 from openinference.instrumentation.openai import OpenAIInstrumentor
 from openinference.instrumentation.dspy import DSPyInstrumentor
-from core.observability import setup_observability
+from core.observability import setup_telemetry
 
-setup_observability()
+# Initialize Telemetry early
+setup_telemetry("nexus-worker")
 OpenAIInstrumentor().instrument()
 
 from core.schemas import GraphExtraction
+from confluent_kafka import Consumer, KafkaError
 
 logger = logging.getLogger(__name__)
 
 # Initialize the Pydantic AI agent with the desired model
-# Since we want it to extract GraphExtraction using tool calling naturally,
-# we use the result_type parameter.
 agent = Agent(
-    model="openai:gpt-4o",  # or any capable model, dummy for now
+    model="openai:gpt-4o",
     result_type=GraphExtraction,
     system_prompt="Extract entities and relationships from the provided document chunk.",
 )
@@ -43,7 +43,6 @@ async def process_message_with_recovery(
     prompt = content
     for attempt in range(max_retries):
         try:
-            # We rely on Pydantic AI's native structured output capabilities
             result = await agent.run(prompt)
             return result.data
         except ValidationError as e:
@@ -68,20 +67,35 @@ async def process_message_with_recovery(
 
 async def consume_document_chunks() -> None:
     """
-    Consumer loop that listens to the Redpanda 'document_chunks' topic.
-    This is a simplified mock implementation.
+    Consumer loop that listens to the Redpanda 'document_chunks' topic using confluent-kafka.
     """
-    # Mocking Redpanda consumer setup
-    logger.info("Starting Redpanda consumer for topic 'document_chunks'...")
+    logger.info("Starting confluent-kafka consumer for topic 'document_chunks'...")
+    conf = {
+        "bootstrap.servers": "localhost:9092",
+        "group.id": "graph_extraction_group",
+        "auto.offset.reset": "earliest",
+    }
+    consumer = Consumer(conf)
+    consumer.subscribe(["document_chunks"])
 
-    # In a real scenario, this would be an actual consumer loop:
-    # consumer = KafkaConsumer('document_chunks', bootstrap_servers='localhost:9092')
-    # for message in consumer:
-    #     content = message.value.decode('utf-8')
-    #     try:
-    #         graph_data = await process_message_with_recovery(content)
-    #         if graph_data:
-    #             insert_to_neo4j(graph_data)
-    #     except Exception as e:
-    #         logger.error(f"Failed to process message: {e}")
-    pass
+    try:
+        while True:
+            msg = consumer.poll(timeout=1.0)
+            if msg is None:
+                continue
+            if msg.error():
+                if msg.error().code() == KafkaError._PARTITION_EOF:
+                    continue
+                else:
+                    logger.error(f"Consumer error: {msg.error()}")
+                    break
+
+            content = msg.value().decode("utf-8")
+            try:
+                graph_data = await process_message_with_recovery(content)
+                if graph_data:
+                    insert_to_neo4j(graph_data)
+            except Exception as e:
+                logger.error(f"Failed to process message: {e}")
+    finally:
+        consumer.close()

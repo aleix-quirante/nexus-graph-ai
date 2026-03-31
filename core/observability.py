@@ -1,5 +1,6 @@
+import logging
 import re
-from typing import Any, Optional
+from typing import Any
 
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
@@ -9,6 +10,8 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter
 from opentelemetry.sdk.trace import Span
 
 PHOENIX_ENDPOINT = "http://localhost:6006/v1/traces"
+
+logger = logging.getLogger(__name__)
 
 
 class ObfuscatingSpanProcessor(BatchSpanProcessor):
@@ -50,12 +53,20 @@ class ObfuscatingSpanProcessor(BatchSpanProcessor):
         super().on_end(span)
 
 
+def setup_telemetry(service_name: str) -> None:
+    try:
+        resource = Resource.create({"service.name": service_name})
+        provider = TracerProvider(resource=resource)
+
+        exporter = OTLPSpanExporter(endpoint=PHOENIX_ENDPOINT)
+        processor = ObfuscatingSpanProcessor(exporter)
+
+        provider.add_span_processor(processor)
+        trace.set_tracer_provider(provider)
+        logger.info(f"OpenTelemetry successfully initialized for {service_name}")
+    except Exception as e:
+        logger.error(f"Failed to initialize OpenTelemetry for {service_name}: {e}")
+
+
 def setup_observability() -> None:
-    resource = Resource.create({"service.name": "nexus-graph-ai"})
-    provider = TracerProvider(resource=resource)
-
-    exporter = OTLPSpanExporter(endpoint=PHOENIX_ENDPOINT)
-    processor = ObfuscatingSpanProcessor(exporter)
-
-    provider.add_span_processor(processor)
-    trace.set_tracer_provider(provider)
+    setup_telemetry("nexus-graph-ai")
