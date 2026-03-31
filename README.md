@@ -98,6 +98,13 @@ python cli/ingest.py data/negocio.txt
 python cli/ask.py "¿Qué proyectos están en riesgo?"
 ```
 
+### 3. Aplicación Web (Streamlit)
+Para levantar la interfaz web interactiva que te permite consultar el grafo en tiempo real:
+```bash
+source venv/bin/activate
+streamlit run app.py
+```
+
 ## 🤝 Contribución
 
 Seguimos estrictamente las directrices de tipado y modularidad definidas en nuestros estándares Empresa 2026. Por favor, asegúrate de que todo pase las pruebas de `pytest`, mantenga la inyección de dependencias y el patrón **Repository**. Las validaciones deben ejecutarse a través de `ValidationPipeline` y los esquemas en `core/ontology.py`.

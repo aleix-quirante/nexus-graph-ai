@@ -2,9 +2,14 @@ import streamlit as st
 import asyncio
 import sys
 import os
+from dotenv import load_dotenv
+
+# Load environment variables from the root .env file
+root_dir = os.path.abspath(os.path.dirname(__file__))
+load_dotenv(os.path.join(root_dir, ".env"), override=True)
 
 # Add root directory to path to ensure core imports work
-sys.path.append(os.path.abspath(os.path.dirname(__file__)))
+sys.path.append(root_dir)
 
 from core.engine import GraphQueryEngine
 
