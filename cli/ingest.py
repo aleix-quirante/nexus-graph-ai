@@ -1,246 +1,149 @@
 import sys
-import asyncio
 import os
 import json
-import glob
-from dotenv import load_dotenv
-from openai import AsyncOpenAI
-from pydantic import ValidationError
-import fitz  # PyMuPDF
+import logging
+import time
+from typing import Generator, Any, Dict, Optional
+from confluent_kafka import Producer, KafkaError
 
-# Ensure the root directory is in the path to import core correctly
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
-from core.database import GraphRepository, Neo4jRepository
-from core.ontology import registry, ValidationPipeline
-from core.schema_map import (
-    get_mapped_label,
-    PRIMARY_IDENTITY_PROPERTY,
-    SCHEMA_MAP,
-    get_standard_rel,
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
-from core.schemas import GraphExtraction
-
-load_dotenv(override=True)
+logger = logging.getLogger(__name__)
 
 
-async def extract_graph(
-    client: AsyncOpenAI, text: str, max_retries: int = 3
-) -> GraphExtraction:
-    valid_labels = ", ".join(list(SCHEMA_MAP["labels"].keys()))
-    valid_rels = ", ".join(list(SCHEMA_MAP["relationships"].keys()))
+class DocumentProducer:
+    """
+    Produces document chunks to a Kafka/Redpanda topic.
+    """
 
-    base_system_prompt = (
-        "Eres un Arquitecto de Datos B2B. Extrae entidades y relaciones del texto.\n"
-        "Extrae de forma agresiva: Personas, Empresas, Pedidos, Productos, Riesgos y Montos. Si ves un nombre propio, es un nodo. Si ves una cifra de dinero (presupuesto, coste, etc.), métela obligatoriamente como propiedad (ej. 'monto') dentro del nodo del PEDIDO o PROYECTO correspondiente.\n"
-        "PROHIBIDO usar etiquetas de una sola letra como 'e'.\n"
-        f"Obligatoriamente usa etiquetas completas y descriptivas basadas en este esquema de nodos: {valid_labels}.\n"
-        f"Obligatoriamente usa tipos de relaciones basados en este esquema de relaciones: {valid_rels}.\n"
-        "Si el texto menciona términos como 'empresa', 'cliente', 'proveedor', mapealos a 'EMPRESA'.\n"
-        "Si menciona 'pedido', 'vigas', 'material', mapealos a 'PEDIDO'.\n"
-        "Asegúrate de crear etiquetas nuevas como EMPLEADO, EQUIPO, LICENCIA si el texto lo requiere, pero prioriza el esquema proporcionado.\n"
-        "Asegúrate de mapear las relaciones a los tipos estándar permitidos.\n"
-        "Debes responder ÚNICAMENTE con un JSON válido que coincida exactamente con este esquema:\n"
-        f"{GraphExtraction.model_json_schema()}"
-    )
+    def __init__(
+        self,
+        broker_url: str,
+        topic: str = "document_chunks",
+        max_retries: int = 5,
+        base_backoff: float = 1.0,
+    ):
+        self.broker_url = broker_url
+        self.topic = topic
+        self.max_retries = max_retries
+        self.base_backoff = base_backoff
+        self.producer = self._connect()
 
-    messages = [
-        {"role": "system", "content": base_system_prompt},
-        {"role": "user", "content": f"Texto a analizar: {text}"},
-    ]
+    def _connect(self) -> Producer:
+        conf = {
+            "bootstrap.servers": self.broker_url,
+            "client.id": "document-producer",
+            "acks": "all",
+            "retries": 3,
+            "retry.backoff.ms": 500,
+        }
+        for attempt in range(self.max_retries):
+            try:
+                producer = Producer(conf)
+                # Test connection conceptually (confluent-kafka connects asynchronously)
+                return producer
+            except Exception as e:
+                logger.error(f"Connection attempt {attempt + 1} failed: {e}")
+                if attempt == self.max_retries - 1:
+                    raise ConnectionError(
+                        f"Failed to connect to Kafka broker at {self.broker_url} after {self.max_retries} attempts."
+                    ) from e
+                time.sleep(self.base_backoff * (2**attempt))
 
-    for attempt in range(max_retries):
-        response = await client.chat.completions.create(
-            model="qwen2.5:32b",
-            messages=messages,
-            response_format={"type": "json_object"},
-            temperature=0.0,
-        )
+        raise ConnectionError("Failed to initialize Kafka producer.")
 
-        raw_json = response.choices[0].message.content
-        try:
-            # Extract json between { and }
-            start_idx = raw_json.find("{")
-            end_idx = raw_json.rfind("}")
-            if start_idx != -1 and end_idx != -1 and end_idx >= start_idx:
-                raw_json = raw_json[start_idx : end_idx + 1]
+    def __enter__(self):
+        return self
 
-            # Validación estricta con Pydantic
-            extraction = GraphExtraction.model_validate_json(raw_json)
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.producer:
+            logger.info("Flushing producer...")
+            self.producer.flush()
 
-            # Additional validation using the ValidationPipeline
-            pipeline = ValidationPipeline(registry)
-            return pipeline.validate_extraction(extraction)
-
-        except ValidationError as e:
-            error_msg = f"El JSON generado es inválido o no cumple el esquema. Errores:\n{e.errors()}\nJSON generado:\n{raw_json}\nCorrige los errores y devuelve ÚNICAMENTE el JSON válido."
-            print(
-                f"⚠️ [Intento {attempt + 1}/{max_retries}] Error de validación, solicitando autocorrección al LLM..."
-            )
-            messages.append({"role": "assistant", "content": raw_json})
-            messages.append({"role": "user", "content": error_msg})
-            if attempt == max_retries - 1:
-                raise ValueError(
-                    f"Fallo tras {max_retries} intentos. Último error: {e}"
-                )
-
-
-def process_extraction_results(extraction: GraphExtraction):
-    # La validación pipeline ahora se hace dentro del retry loop.
-    id_map = {}
-    for node in extraction.nodes:
-        old_id = node.id
-        raw_name = str(node.properties.get("nombre", old_id))
-        clean_name = raw_name.replace("'", "").replace('"', "")
-        new_id = clean_name
-        id_map[old_id] = new_id
-
-        node.id = new_id
-        node.properties[PRIMARY_IDENTITY_PROPERTY] = new_id
-        node.properties["nombre"] = new_id
-        node.label = get_mapped_label(node.label)
-
-    for rel in extraction.relationships:
-        rel.type = get_standard_rel(rel.type)
-        rel.source_id = (
-            id_map.get(rel.source_id, rel.source_id).replace("'", "").replace('"', "")
-        )
-        rel.target_id = (
-            id_map.get(rel.target_id, rel.target_id).replace("'", "").replace('"', "")
-        )
-
-    return extraction
-
-
-def clean_pdf_text(text: str) -> str:
-    # Remove weird line breaks but keep paragraph structure mostly
-    # Replace multiple spaces or newlines
-    lines = text.split("\n")
-    cleaned_lines = [line.strip() for line in lines if line.strip()]
-    return " ".join(cleaned_lines)
-
-
-def get_files_to_process(path: str) -> list[str]:
-    files = []
-    if os.path.isfile(path):
-        if path.lower().endswith((".txt", ".pdf")):
-            files.append(path)
-    elif os.path.isdir(path):
-        for ext in ("*.txt", "*.pdf"):
-            files.extend(glob.glob(os.path.join(path, f"**/{ext}"), recursive=True))
-    return files
-
-
-def extract_text_from_file(file_path: str) -> str:
-    if file_path.lower().endswith(".pdf"):
-        text_parts = []
-        with fitz.open(file_path) as doc:
-            for page in doc:
-                blocks = page.get_text("blocks")
-                for block in blocks:
-                    block_type = block[6]
-                    if block_type == 0:  # Text block
-                        text_parts.append(block[4].strip())
-        text = "\n\n".join(text_parts)
-        return clean_pdf_text(text)
-    else:
-        with open(file_path, "r", encoding="utf-8") as f:
-            return f.read().strip()
-
-
-def chunk_text(text: str, max_words=2000) -> list[str]:
-    words = text.split()
-    chunks = []
-    for i in range(0, len(words), max_words):
-        chunks.append(" ".join(words[i : i + max_words]))
-    return chunks
-
-
-async def process_file(file_path: str, db: GraphRepository, llm_client: AsyncOpenAI):
-    print(f"Procesando [{os.path.basename(file_path)}]...")
-    try:
-        raw_text = extract_text_from_file(file_path)
-        if not raw_text:
-            print(
-                f"⚠️ El archivo {os.path.basename(file_path)} está vacío o no se pudo extraer texto."
-            )
-            return
-
-        chunks = chunk_text(raw_text, max_words=2000)
-        total_nodes = 0
-
-        for idx, chunk in enumerate(chunks):
-            if len(chunks) > 1:
-                print(f"  -> Procesando chunk {idx + 1}/{len(chunks)}...")
-
-            extraction = await extract_graph(llm_client, chunk)
-            extraction = process_extraction_results(extraction)
-            total_nodes += len(extraction.nodes)
-
-            if len(extraction.nodes) > 0 or len(extraction.relationships) > 0:
-                db.add_graph_data(extraction)
-
-        print(
-            f"Procesando [{os.path.basename(file_path)}]... [{total_nodes}] entidades extraídas"
-        )
-
-    except Exception as e:
-        print(f"❌ Error procesando {os.path.basename(file_path)}: {str(e)}")
-
-
-async def main():
-    try:
-        path = None
-        if len(sys.argv) > 1:
-            path = sys.argv[1]
+    def _delivery_callback(self, err: Optional[KafkaError], msg: Any):
+        """
+        Optional per-message delivery callback (triggered by poll() or flush())
+        when a message has been successfully delivered or permanently failed delivery.
+        """
+        if err is not None:
+            logger.error(f"Message delivery failed: {err}")
         else:
-            print("❌ ERROR: Se requiere proporcionar un archivo o carpeta.")
-            print("Uso: python cli/ingest.py <archivo_o_carpeta>")
-            return
-
-        files_to_process = get_files_to_process(path)
-        if not files_to_process:
-            print(
-                f"⚠️ No se encontraron archivos .txt o .pdf en la ruta especificada: {path}"
+            logger.debug(
+                f"Message delivered to {msg.topic()} [{msg.partition()}] at offset {msg.offset()}"
             )
-            return
 
-        print(
-            f"🚀 Iniciando extracción agéntica DIRECTA en {len(files_to_process)} archivo(s)..."
-        )
-
-        load_dotenv(override=True)
-        uri = os.getenv("NEO4J_URI", "").strip().replace('"', "").replace("'", "")
-        user = os.getenv("NEO4J_USER", "").strip().replace('"', "").replace("'", "")
-        password = (
-            os.getenv("NEO4J_PASSWORD", "").strip().replace('"', "").replace("'", "")
-        )
-
-        if not all([uri, user, password]):
-            print(
-                "❌ ERROR: Faltan variables en el .env. Revísalo y guarda los cambios."
-            )
-            return
-
-        db_repository = Neo4jRepository(uri, user, password)
-
-        # Inyección del cliente de LLM
-        llm_client = AsyncOpenAI(
-            base_url=os.getenv("OPENAI_BASE_URL", "http://localhost:11434/v1"),
-            api_key=os.getenv("OPENAI_API_KEY", "ollama-local"),
-        )
-
+    def _read_chunks(
+        self, file_path: str, chunk_size_words: int = 1000
+    ) -> Generator[str, None, None]:
+        """
+        Reads a file iteratively and yields chunks of text based on word count.
+        """
         try:
-            db_repository.check_connection()
-            for file_path in files_to_process:
-                await process_file(file_path, db_repository, llm_client)
-            print("💎 Grafo inyectado en Neo4j con éxito.")
-        finally:
-            db_repository.close()
+            with open(file_path, "r", encoding="utf-8") as f:
+                current_chunk = []
+                current_words = 0
+                for line in f:
+                    words = line.split()
+                    for word in words:
+                        current_chunk.append(word)
+                        current_words += 1
+                        if current_words >= chunk_size_words:
+                            yield " ".join(current_chunk)
+                            current_chunk = []
+                            current_words = 0
+                if current_chunk:
+                    yield " ".join(current_chunk)
+        except Exception as e:
+            logger.error(f"Error reading file {file_path}: {e}")
+            raise
 
+    def process_file(self, file_path: str, chunk_size_words: int = 1000):
+        """
+        Processes a file, chunks it, and publishes to Kafka.
+        """
+        logger.info(f"Processing file: {file_path}")
+        chunk_count = 0
+        for chunk_text in self._read_chunks(file_path, chunk_size_words):
+            payload = {
+                "file_name": os.path.basename(file_path),
+                "chunk_index": chunk_count,
+                "text": chunk_text,
+                "timestamp": time.time(),
+            }
+            try:
+                serialized_payload = json.dumps(payload).encode("utf-8")
+                self.producer.produce(
+                    topic=self.topic,
+                    value=serialized_payload,
+                    on_delivery=self._delivery_callback,
+                )
+                self.producer.poll(0)  # Serve delivery callback queue
+                chunk_count += 1
+            except Exception as e:
+                logger.error(f"Error publishing chunk {chunk_count}: {e}")
+                raise
+
+        self.producer.flush()
+        logger.info(f"Successfully processed {chunk_count} chunks from {file_path}")
+        return chunk_count
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: python cli/ingest.py <file_path>")
+        sys.exit(1)
+
+    file_path = sys.argv[1]
+    broker_url = os.environ.get("KAFKA_BROKER_URL", "localhost:9092")
+
+    try:
+        with DocumentProducer(broker_url=broker_url) as producer:
+            producer.process_file(file_path)
     except Exception as e:
-        print(f"❌ Error en el Pipeline: {str(e)}")
+        logger.error(f"Ingestion failed: {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
