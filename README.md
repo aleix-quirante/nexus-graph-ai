@@ -1,82 +1,53 @@
 # Nexus Graph AI 🌌
 
-![Version](https://img.shields.io/badge/versión-2.1.0-blue.svg)
+![Version](https://img.shields.io/badge/versión-3.0.0-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![License](https://img.shields.io/badge/licencia-MIT-green)
 
-Nexus Graph AI es una plataforma de vanguardia que combina Bases de Datos Orientadas a Grafos e Inteligencia Artificial para proporcionar conocimiento relacional profundo y capacidades inteligentes de consulta de datos. Construido bajo los estándares de la **Arquitectura de Referencia Empresa 2026** y aplicando el patrón de diseño **Schema-First Graph Extraction**.
+Nexus Graph AI es una plataforma de vanguardia que combina Bases de Datos Orientadas a Grafos e Inteligencia Artificial para proporcionar conocimiento relacional profundo y capacidades inteligentes de consulta de datos. Construido bajo los estándares de la **Arquitectura de Referencia Empresa 2026** y aplicando el patrón de diseño **Dynamic Schema-First Graph Extraction** con **Inyección de Dependencias**.
 
-## 🏗️ Arquitectura de Referencia (Schema-First)
+## 🏗️ Arquitectura de Referencia (Dynamic Schema-First & Repository Pattern)
 
-Nuestra arquitectura está diseñada para ofrecer escalabilidad extrema, modularidad y procesamiento enfocado principalmente en IA ("AI-first"). A diferencia de los sistemas RAG tradicionales, Nexus Graph AI obliga a los modelos generativos a adherirse estrictamente a una topología de Grafo de Conocimiento predefinida, eliminando alucinaciones y estandarizando las relaciones a gran escala.
+Nuestra arquitectura está diseñada para ofrecer escalabilidad extrema, modularidad y procesamiento enfocado en IA. A diferencia de los sistemas RAG tradicionales, Nexus Graph AI obliga a los modelos generativos a adherirse estrictamente a una topología de Grafo de Conocimiento predefinida de forma dinámica, eliminando alucinaciones y estandarizando las relaciones a gran escala.
 
-A continuación, se muestra el flujo de datos de alto nivel:
-
-```mermaid
-graph TD
-    %% Estilos
-    classDef client fill:#3b82f6,stroke:#1d4ed8,stroke-width:2px,color:#fff;
-    classDef core fill:#10b981,stroke:#047857,stroke-width:2px,color:#fff;
-    classDef ai fill:#8b5cf6,stroke:#6d28d9,stroke-width:2px,color:#fff;
-    classDef db fill:#f59e0b,stroke:#b45309,stroke-width:2px,color:#fff;
-
-    %% Nodos
-    Client([Interfaces: chat.py / ask.py / cli]) ::: client
-    Engine[Engine Central<br/>core/engine.py] ::: core
-    Schema[Schema Map<br/>core/schema_map.py] ::: core
-    Agent{Agentes Cypher & Answer<br/>pydantic-ai} ::: ai
-    GraphDB[(Base de Datos Neo4j<br/>core/database.py)] ::: db
-    
-    %% Conexiones
-    Client -->|Pregunta Natural / Texto Raw| Engine
-    Engine -->|Carga de Reglas Estrictas| Schema
-    Schema -->|Restricciones de Tipado| Agent
-    Engine -->|Generación & Síntesis| Agent
-    Engine -->|Cypher Seguro (IS NOT NULL)| GraphDB
-    Agent <-->|Contexto & Esquema| GraphDB
-```
+Recientemente hemos transicionado hacia una arquitectura más robusta:
+- **Repository Pattern**: Se ha sustituido el acoplamiento directo de `Neo4jClient` por el protocolo abstracto `GraphRepository` implementado mediante `Neo4jRepository` en `core/database.py`.
+- **Inyección de Dependencias**: Funciones críticas de orquestación y procesamiento asíncrono (como en `cli/ingest.py`) ahora reciben instancias inyectadas del cliente de base de datos (`GraphRepository`) y de IA (`AsyncOpenAI`), eliminando el estado global y maximizando la testabilidad.
+- **Ontología Dinámica**: Un sistema de inyección de esquemas dinámicos utilizando modelos de dominio de Pydantic (`core/ontology.py`) que sincronizan automáticamente con Neo4j e incluyen un pipeline estricto de validación (autorecovery de LLM).
 
 ## 📂 Estructura del Proyecto
 
 ```text
 nexus-graph-ai/
 ├── core/               # Motor principal
-│   ├── database.py     # Cliente Neo4j (Conexión, Transacciones, Cartesian Product Fix)
-│   ├── engine.py       # Lógica Multi-Agente (Traducción NLP a Cypher con 8 Reglas Críticas)
-│   └── schema_map.py   # Diccionario Central de Nodos y Relaciones Canónicas (Schema-First)
+│   ├── database.py     # Implementación del GraphRepository Protocol y Neo4jRepository
+│   ├── engine.py       # Lógica Multi-Agente (Traducción NLP a Cypher con Reglas Críticas)
+│   ├── ontology.py     # Ontología Dinámica, Registro de Esquemas y ValidationPipeline
+│   └── schema_map.py   # Diccionario Central compatibilizado dinámicamente
 ├── cli/                # Comandos ejecutables
-│   ├── ingest.py       # Pipeline de inyección de datos (LLM -> Grafo Tipado)
+│   ├── ingest.py       # Pipeline de inyección de datos (Inyección de Dependencias, LLM -> Grafo Tipado)
 │   └── ask.py          # Consulta simple (One-shot QA)
-├── data/               # Documentos fuente
-│   ├── empleados.txt   # Ejemplos HR
-│   └── negocio.txt     # Ejemplos B2B (Logística y Presupuestos)
-├── tests/              # Pruebas automatizadas
-│   ├── test_basico.py  # Pruebas básicas
-│   ├── test_stress.py  # Pruebas de estrés
-│   ├── test_conn.py    # Pruebas de conexión
-│   └── test_qa.py      # Pruebas de QA
-├── schemas.py          # Validación Pydantic (GraphExtraction, Node, Relationship)
-├── chat.py             # Interfaz interactiva de consola
-├── requirements.txt    # Dependencias
-└── .env                # Variables de entorno
+├── tests/              # Pruebas automatizadas (Pytest)
+│   ├── conftest.py     # Fixtures y Mocks robustos para GraphRepository
+│   ├── test_ontology.py# Pruebas de la Ontología Dinámica y el ValidationPipeline
+│   └── test_database.py# Pruebas transaccionales aisladas de Base de Datos
+└── ...
 ```
 
 ## ✨ Características Principales
 
-- **Schema-First Extraction**: Las entidades (`EMPRESA`, `PEDIDO`, etc.) y relaciones (`REALIZA_PEDIDO`, `TIENE_RIESGO`) están fuertemente tipadas en `schema_map.py`. El LLM nunca inventa nodos o relaciones nuevas que rompan la base de datos, garantizando una ingesta masiva predecible.
-- **Consultas impulsadas por IA Infallibles**: El motor en `core/engine.py` incorpora 8 reglas estrictas de generación Cypher que obligan a la IA a no inventar propiedades, no hacer búsquedas literales inútiles y a usar sintaxis segura para Neo4j 5+ (como `IS NOT NULL` en lugar de `EXISTS`).
-- **Prevención de Cartesian Products**: El cliente de base de datos realiza inyecciones `WITH a, b LIMIT 1 MERGE` que previenen el colapso del cluster de Neo4j al ingestar relaciones de forma asíncrona.
-- **Extracción de Grafos de Conocimiento**: Extrae automáticamente entidades, montos financieros, riesgos y relaciones a partir de texto no estructurado usando modelos de lenguaje (Ollama/Qwen).
-- **Arquitectura Modular**: Separación clara entre motor de base de datos (`core/database.py`), inteligencia de agentes (`core/engine.py`) y CLI (`cli/`).
-- **Chat Interactivo**: Sesiones conversacionales continuas con tu base de datos mediante comandos sencillos.
+- **Dynamic Schema-First Extraction**: Las entidades y relaciones se validan contra un esquema dinámico registrado en tiempo de ejecución. El pipeline rechaza relaciones imposibles antes de llegar a la base de datos.
+- **Auto-Recovery Loop (LLM)**: Si el LLM comete un error de estructura o de lógica ontológica, un bucle de reintento (`max_retries`) captura las fallas de Pydantic e instruye al agente para que auto-corrija su respuesta instantáneamente.
+- **Patrón Repositorio y DI**: Base de código completamente testeable en aislamiento gracias a las inyecciones de dependencias formales.
+- **Prevención de Cartesian Products**: El cliente de base de datos realiza inyecciones seguras y atómicas, mitigando el colapso del cluster.
 
 ## 📋 Requisitos Previos
 
 - Python 3.11+
 - Base de Datos Neo4j (AuraDB o local, ver. 5+)
-- Acceso a un LLM (OpenAI API o Local via Ollama - recomendado: qwen2.5:32b o superior para GraphRAG)
+- Acceso a un LLM (OpenAI API o Local via Ollama)
 
-## 🚀 Instalación
+## 🚀 Instalación y Entorno Virtual Local
 
 1. **Clonar el repositorio:**
    ```bash
@@ -84,13 +55,20 @@ nexus-graph-ai/
    cd nexus-graph-ai
    ```
 
-2. **Instalar dependencias:**
+2. **Crear y activar entorno virtual:**
    ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate
+   ```
+
+3. **Instalar dependencias necesarias:**
+   ```bash
+   pip install pytest pydantic neo4j openai
    pip install -r requirements.txt
    ```
 
-3. **Configuración de Entorno:**
-   Copia el archivo `.env.example` a `.env` (o crea uno) y configura tus variables:
+4. **Configuración de Entorno:**
+   Copia el archivo `.env.example` a `.env` y configura tus variables:
    ```env
    NEO4J_URI=bolt://localhost:7687
    NEO4J_USER=neo4j
@@ -99,31 +77,31 @@ nexus-graph-ai/
    OPENAI_BASE_URL=http://localhost:11434/v1
    ```
 
+## 💻 Pruebas Unitarias (Pytest)
+
+Las pruebas están completamente aisladas utilizando mocks robustos (como `MockNeo4jDriver`) para evitar interactuar con bases de datos reales. Para ejecutar la suite completa de tests de la arquitectura:
+
+```bash
+PYTHONPATH=. .venv/bin/pytest tests/test_ontology.py tests/test_database.py
+```
+
 ## 💻 Uso
 
-### 1. Ingestar Datos (Modo Schema-First)
-Para procesar un texto y poblar la base de datos de grafos automáticamente, respetando el `schema_map.py`:
+### 1. Ingestar Datos (Modo DI & Async)
+Para procesar un texto y poblar la base de datos de grafos utilizando la inyección de dependencias y la ontología dinámica:
 ```bash
 python cli/ingest.py data/negocio.txt
 ```
 
 ### 2. Consulta de un solo uso (One-shot)
-Para hacer una pregunta rápida sin entrar al chat interactivo:
 ```bash
 python cli/ask.py "¿Qué proyectos están en riesgo?"
 ```
 
-### 3. Modo Chat Interactivo
-Inicia la consola interactiva conversacional:
-```bash
-python chat.py
-```
-*(Comandos del chat: escribe `/clear_db` para limpiar la base de datos de Neo4j, `/clear` para limpiar pantalla de terminal, o `/exit` para salir).*
-
 ## 🤝 Contribución
 
-Seguimos estrictamente las directrices de tipado y modularidad definidas en nuestros estándares Empresa 2026. Por favor, asegúrate de que todo pase la validación de `pydantic` y se adhiera al patrón **Schema-First Extraction** antes de hacer PR. Nunca añadas propiedades al LLM Extraction que no estén respaldadas en el `schema_map.py`.
+Seguimos estrictamente las directrices de tipado y modularidad definidas en nuestros estándares Empresa 2026. Por favor, asegúrate de que todo pase las pruebas de `pytest`, mantenga la inyección de dependencias y el patrón **Repository**. Las validaciones deben ejecutarse a través de `ValidationPipeline` y los esquemas en `core/ontology.py`.
 
 ## 📄 Licencia
 
-Este proyecto está bajo la Licencia MIT - consulta el archivo LICENSE para más detalles.
+Este proyecto está bajo la Licencia MIT.
