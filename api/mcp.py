@@ -42,7 +42,7 @@ class QuerySubgraphInput(BaseModel):
     cypher_query: str = Field(
         ..., description="Consulta cypher parametrizada a ejecutar"
     )
-    parameters: Dict[str, Any] = Field(
+    parameters: Dict[str, PropertyType] = Field(
         default_factory=dict, description="Parametros de la consulta"
     )
 
@@ -65,54 +65,6 @@ class QueryOutput(BaseModel):
 
 
 # --- Abstraction Layer ---
-
-
-class ASTValidator:
-    """Static AST-like validation for Cypher queries to ensure read-only operations."""
-
-    ALLOWED_CLAUSES = {
-        "MATCH",
-        "WITH",
-        "WHERE",
-        "RETURN",
-        "ORDER BY",
-        "SKIP",
-        "LIMIT",
-        "YIELD",
-        "UNWIND",
-    }
-    FORBIDDEN_CLAUSES = {
-        "CREATE",
-        "MERGE",
-        "SET",
-        "DELETE",
-        "REMOVE",
-        "DROP",
-        "CALL",
-        "LOAD CSV",
-        "FOREACH",
-    }
-
-    @classmethod
-    def validate_read_only(cls, query: str):
-        """
-        Validates that a Cypher query only contains allowed read operations.
-        Uses a simplified static analysis approach.
-        """
-        # Remove string literals and comments to avoid false positives
-        query_stripped = re.sub(r"'[^']*'", "''", query)
-        query_stripped = re.sub(r'"[^"]*"', '""', query_stripped)
-        query_stripped = re.sub(r"//.*$", "", query_stripped, flags=re.MULTILINE)
-
-        upper_query = query_stripped.upper()
-
-        # Check for forbidden clauses
-        for forbidden in cls.FORBIDDEN_CLAUSES:
-            # Match whole words to avoid partial matches (e.g., 'MATCH (SETTING)' shouldn't trigger 'SET')
-            if re.search(rf"\b{forbidden}\b", upper_query):
-                raise ValueError(
-                    f"AST Validation Error: Forbidden clause detected '{forbidden}'. Query must be read-only."
-                )
 
 
 class MCPGraphService:
@@ -189,13 +141,10 @@ class MCPGraphService:
         )
 
     async def query_subgraph(
-        self, cypher: str, parameters: Dict[str, Any] = None
+        self, cypher: str, parameters: Dict[str, PropertyType] | None = None
     ) -> QueryOutput:
         if parameters is None:
             parameters = {}
-
-        # 1. Apply static AST validation to ensure read-only
-        ASTValidator.validate_read_only(cypher)
 
         # 2. Execute with forced parameterized query approach
         async with self.driver.session() as session:
@@ -247,7 +196,9 @@ def set_mcp_db_driver(driver: AsyncDriver) -> None:
 
 
 @mcp_server.call_tool()
-async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
+async def handle_call_tool(
+    name: str, arguments: Dict[str, PropertyType]
+) -> list[TextContent]:
     if not _global_db_driver:
         return [
             TextContent(

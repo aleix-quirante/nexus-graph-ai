@@ -2,9 +2,35 @@ import os
 import json
 import hashlib
 import asyncio
-from typing import TypedDict, Any, Dict, List, Protocol
+from typing import TypedDict, Dict, List, Protocol
 from langgraph.graph import StateGraph, START, END
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.aioredis import AsyncRedisSaver
+import time
+import hashlib
+from redis.asyncio import Redis
+
+# Create redis client
+redis_client = Redis.from_url("redis://localhost:6379", decode_responses=True)
+
+
+async def check_idempotency_key(data_props: dict, window_seconds: int = 3600) -> bool:
+    # Genera una huella dactilar única utilizando una función hash sobre las propiedades de los datos y un timestamp de ventana temporal
+    window_timestamp = int(time.time() / window_seconds)
+    props_str = json.dumps(data_props, sort_keys=True)
+    hash_input = f"{props_str}_{window_timestamp}".encode("utf-8")
+    fingerprint = hashlib.sha256(hash_input).hexdigest()
+
+    key = f"neo4j_idempotency:{fingerprint}"
+    is_processed = await redis_client.get(key)
+    if is_processed:
+        return True
+
+    await redis_client.setex(key, window_seconds, "1")
+    return False
+
+
+# ... rest remains unchanged but I'll patch the whole file ...
+
 from openai import AsyncOpenAI
 import google.generativeai as genai
 
@@ -99,10 +125,17 @@ class ContextEntry(TypedDict):
     signature: str
 
 
+class ExtractedEntity(TypedDict):
+    key: str
+    value: str
+
+
 class AgentState(TypedDict):
+    messages: List[str]
+    current_node: str
+    extracted_entities: List[ExtractedEntity]
     query: str
     response: str
-    step_count: int
     history: List[ContextEntry]
 
 
@@ -124,15 +157,7 @@ router = CircuitBreakerRouter(primary=ollama_provider, fallback=gemini_provider)
 security_enforcer = SpecializedGeminiEnforcer(provider=gemini_provider)
 
 
-async def reasoning_agent(state: AgentState) -> Dict[str, Any]:
-    current_step = state.get("step_count", 0) + 1
-
-    if current_step > 3:
-        return {
-            "step_count": current_step,
-            "response": "Límite de razonamiento excedido",
-        }
-
+async def reasoning_agent(state: AgentState) -> Dict[str, List[ContextEntry] | str]:
     history = state.get("history", [])
     valid_messages = []
 
@@ -172,20 +197,16 @@ async def reasoning_agent(state: AgentState) -> Dict[str, Any]:
         }
     )
 
-    return {"step_count": current_step, "response": respuesta_real, "history": history}
+    return {"response": respuesta_real, "history": history}
 
 
 def route_reasoning(state: AgentState) -> str:
-    if state.get("step_count", 0) > 3:
-        return "terminal_node"
+    # Recursion is natively handled by LangGraph via recursion_limit.
     return "terminal_node"
 
 
-async def terminal_node(state: AgentState) -> Dict[str, Any]:
+async def terminal_node(state: AgentState) -> Dict[str, str]:
     response_to_validate = state.get("response", "")
-
-    if response_to_validate == "Límite de razonamiento excedido":
-        return {"response": response_to_validate}
 
     try:
         validated_output = await security_enforcer.validate_llm_output(
@@ -196,7 +217,7 @@ async def terminal_node(state: AgentState) -> Dict[str, Any]:
         return {"response": f"Bloqueado por seguridad: {str(e)}"}
 
 
-def build_graph() -> Any:
+def build_graph() -> StateGraph:
     workflow = StateGraph(AgentState)
     workflow.add_node("reasoning_agent", reasoning_agent)
     workflow.add_node("terminal_node", terminal_node)
@@ -204,8 +225,11 @@ def build_graph() -> Any:
     workflow.add_conditional_edges("reasoning_agent", route_reasoning)
     workflow.add_edge("terminal_node", END)
 
-    memory_saver = MemorySaver()
-    app = workflow.compile(checkpointer=memory_saver)
+    redis_connection = Redis.from_url("redis://localhost:6379")
+    redis_saver = AsyncRedisSaver(redis_connection)
+    app = workflow.compile(checkpointer=redis_saver)
+    # The recursion_limit is set natively when invoking the graph
+    # Example: app.invoke(state, config={"recursion_limit": 20})
     return app
 
 

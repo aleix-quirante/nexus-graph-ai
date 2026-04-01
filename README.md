@@ -54,6 +54,16 @@ Security is not an afterthought. The system implements guardrails at every bound
 
 ---
 
+## Contratos de Datos (AgentState)
+
+El motor multi-agente opera sobre un flujo de estado estrictamente tipado. Si integras herramientas externas o inyectas estado inicial, debes adherirte a la siguiente estructura:
+- `messages`: Lista de strings con el contexto o prompts enviados.
+- `current_node`: String que indica el nodo actual del flujo de LangGraph.
+- `extracted_entities`: Lista de diccionarios con claves `key` y `value` de tipo string, representando las entidades procesadas.
+- `query`, `response` e `history`: Campos internos de gestión de razonamiento y firmas criptográficas del LLM.
+
+---
+
 ## 🚀 Getting Started
 
 *Internal Documentation & Deployment configuration requires proper authorization.*
