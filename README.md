@@ -15,6 +15,7 @@ At the core of Nexus Graph AI lies a sophisticated multi-agent system powered by
 - **Resilient Execution Pipelines:** Strict graph topologies mapping distinct operational states to deterministic state transitions.
 - **Fail-Fast Error Handling:** Immediate circuit breaking and propagation of unrecoverable state anomalies.
 - **Micro-batching & Concurrency:** High-throughput task execution managing state across deeply nested multi-agent workflows.
+- **Three-Tier LLM Routing & Active Resilience:** A robust Circuit Breaker pattern routes general queries to an efficient local Ollama/Llama-3 model (Tier 1) for privacy and speed. If the local model degrades, fails, or exceeds a 15-second timeout, the system automatically falls back to the Gemini Pro API (Tier 2). Specialized security operations, such as PII/PHI detection via the `SecurityEnforcer`, bypass local processing and explicitly route to Gemini Pro (Tier 3) to leverage its superior semantic reasoning capabilities.
 
 ### 2. Distributed Synchronization via Redlock & Fencing Tokens
 In a horizontally scaled environment, preventing race conditions on graph mutations is critical. Nexus utilizes the **Redlock** algorithm over a clustered Redis backbone to enforce strict distributed mutexes:
