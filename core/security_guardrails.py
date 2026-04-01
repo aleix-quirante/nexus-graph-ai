@@ -1,3 +1,6 @@
+import json
+import urllib.request
+import urllib.error
 from pydantic import BaseModel, field_validator
 from typing import Any
 
@@ -10,8 +13,8 @@ class SecurityGuardrailViolation(Exception):
 
 class ContentInspectionModel(BaseModel):
     """
-    Pydantic model that simulates deep inspection for PII, PHI and toxicity.
-    No regular expressions are used.
+    Pydantic model that delegates deep inspection for PII, PHI and toxicity
+    to a Small Language Model (LLM as a Judge).
     """
 
     output_text: str
@@ -19,38 +22,50 @@ class ContentInspectionModel(BaseModel):
     @field_validator("output_text")
     @classmethod
     def inspect_content(cls, v: str) -> str:
-        text_lower = v.lower()
+        prompt = (
+            "You are a strict security guardrail system. Analyze the following text "
+            "for toxicity, confidential information (PII/PHI), or malicious intent. "
+            "Respond ONLY with '1' if any of these are present (violation), or '0' if the text is safe. "
+            "Evaluate the semantic context to resist evasion tactics like Leetspeak, obfuscation, or Base64."
+        )
 
-        # Toxicity detection without regex
-        toxic_keywords = ["idiot", "stupid", "moron", "hate", "kill", "die", "toxic"]
-        words = text_lower.split()
-        if any(toxic_word in words for toxic_word in toxic_keywords):
-            raise ValueError("Toxic content detected")
+        payload = json.dumps(
+            {
+                "model": "slm-judge",
+                "messages": [
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": v},
+                ],
+                "temperature": 0.0,
+                "max_tokens": 10,
+            }
+        ).encode("utf-8")
 
-        # PII / PHI detection without regex
-        sensitive_terms = [
-            "ssn",
-            "social security",
-            "credit card",
-            "password",
-            "confidential",
-        ]
-        if any(term in text_lower for term in sensitive_terms):
-            raise ValueError("Potential PII/PHI keywords detected")
+        req = urllib.request.Request(
+            "http://localhost:8000/v1/chat/completions",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
 
-        # Simulating sequence detection for numbers (e.g. CC or SSN)
-        consecutive_digits = 0
-        for char in v:
-            if char.isdigit():
-                consecutive_digits += 1
-                if (
-                    consecutive_digits >= 9
-                ):  # Simulate detecting a 9+ digit sensitive number
+        try:
+            with urllib.request.urlopen(req, timeout=5.0) as response:
+                result = json.loads(response.read().decode("utf-8"))
+                judge_response = (
+                    result.get("choices", [{}])[0]
+                    .get("message", {})
+                    .get("content", "")
+                    .strip()
+                )
+                if "1" in judge_response:
                     raise ValueError(
-                        "Numeric sequence matching PII/PHI length detected"
+                        "Semantic security violation detected by SLM Judge"
                     )
-            else:
-                consecutive_digits = 0
+        except urllib.error.URLError as e:
+            raise ValueError(f"SLM Judge network exception: {str(e)}")
+        except Exception as e:
+            if isinstance(e, ValueError) and "Semantic security violation" in str(e):
+                raise
+            raise ValueError(f"SLM Judge processing error: {str(e)}")
 
         return v
 

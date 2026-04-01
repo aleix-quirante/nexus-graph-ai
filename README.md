@@ -46,7 +46,8 @@ Every function call, state transition, and cypher query is instrumented:
 
 ### 7. SOC2 Readiness by Design
 Security is not an afterthought. The system implements guardrails at every boundary:
-- **Strict Input Validation:** Pydantic-enforced schemas on all ingress endpoints.
+- **Semantic Content Inspection (LLM as a Judge):** We utilize a dedicated Small Language Model (SLM) to perform semantic evaluation of all content, detecting toxicity, PII, PHI, and malicious intent. This neutralizes evasion tactics like Leetspeak or Base64 encoding.
+- **Strict Input Validation:** Pydantic-enforced schemas on all ingress endpoints, integrating robust network exception handling for the SLM judge to guarantee system stability and fail-safe operations.
 - **RBAC & Isolation:** Query isolation ensuring agents can only access authorized graph sub-graphs.
 - **Secret Management:** Strict segregation of sensitive credentials from the operational logic layer.
 
