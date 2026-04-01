@@ -22,7 +22,7 @@ class OntologyLockManager:
     @asynccontextmanager
     async def acquire_edge_locks(
         self, source_id: str, target_id: str
-    ) -> AsyncGenerator[None, None]:
+    ) -> AsyncGenerator[int, None]:
         """
         Acquires distributed locks for a pair of node IDs to safely mutate edges.
         Locks are acquired strictly at the Node ID level.
@@ -55,7 +55,12 @@ class OntologyLockManager:
             if not acquired_lock2:
                 raise TimeoutError(f"Failed to acquire lock for node {sorted_ids[1]}")
 
-            yield
+            # Generate monotonically increasing fencing token
+            fencing_token = await self.redis.incr(
+                f"fencing_token:{sorted_ids[0]}:{sorted_ids[1]}"
+            )
+
+            yield fencing_token
 
         finally:
             if acquired_lock2:

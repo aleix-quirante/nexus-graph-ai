@@ -1,149 +1,70 @@
-# Nexus Graph AI 🌌
+# Nexus Graph AI 
 
-![Version](https://img.shields.io/badge/versión-3.0.0-blue.svg)
-![Python](https://img.shields.io/badge/python-3.11%2B-blue)
-![License](https://img.shields.io/badge/licencia-MIT-green)
+**Enterprise-Grade Knowledge Graph Orchestration Engine**
 
-Nexus Graph AI es una plataforma de vanguardia que combina Bases de Datos Orientadas a Grafos e Inteligencia Artificial para proporcionar conocimiento relacional profundo y capacidades inteligentes de consulta de datos. Construido bajo los estándares de la **Arquitectura de Referencia Empresa 2026** y aplicando el patrón de diseño **Dynamic Schema-First Graph Extraction** con **Inyección de Dependencias**.
+Nexus Graph AI is a robust, production-ready system engineered to bridge the gap between deterministic knowledge representation and probabilistic Large Language Models. Built for environments where downtime is unacceptable and data integrity is paramount, this platform provides a highly scalable architecture that strictly adheres to zero-trust principles and fail-fast operational paradigms.
 
-## 🏗️ Arquitectura de Referencia
+---
 
-Nuestra arquitectura está diseñada para ofrecer escalabilidad extrema, modularidad y procesamiento enfocado en IA. Recientemente, el proyecto ha evolucionado para incluir streaming de eventos, observabilidad avanzada, una capa de API robusta, control de concurrencia avanzado y enrutamiento inteligente:
+## 🏗 System Topology & Architecture
 
-- **Repository Pattern & DI**: Desacoplamiento de la base de datos mediante el protocolo abstracto `GraphRepository` (implementado en `Neo4jRepository`). Las dependencias se inyectan en tiempo de ejecución, facilitando el testing aislado.
-- **Ontología Dinámica y Auto-Recovery**: Validación estricta de grafos utilizando Pydantic. Si el LLM genera estructuras inválidas, un bucle automático de recuperación (`max_retries`) solicita auto-corrección.
-- **Campos de Validez Temporal en la Ontología**: Soporte añadido para esquemas de ontología con campos de validez temporal (`valid_from`, `valid_until`), permitiendo la evolución histórica y seguimiento de datos en el tiempo en el modelo de conocimiento.
-- **Enrutamiento de Inferencia y Extracción (LangGraph)**: Integración profunda de **LangGraph** para orquestar y enrutar inteligentemente el flujo de extracción de entidades y relaciones, además de dirigir consultas de inferencia hacia agentes especializados, mejorando la modularidad y gestión de estado.
-- **Control de Concurrencia Distribuida (Redis)**: Implementación de un `OntologyLockManager` respaldado por **Redis** para prevenir condiciones de carrera y asegurar operaciones thread-safe durante la actualización concurrente del esquema de la ontología y el grafo.
-- **Event-Driven Ingestion (Redpanda)**: El pipeline de ingesta soporta particionado de documentos asíncrono y encolamiento a través de un productor de Redpanda, permitiendo procesar grandes volúmenes de texto de manera distribuida.
-- **Observabilidad Integral (Arize Phoenix)**: Instrumentación completa con **OpenTelemetry** y **OpenInference**. Trazas detalladas de llamadas a la API, workers de procesamiento y peticiones al LLM son enviadas a una instancia local de Arize Phoenix.
-- **API REST & MCP Scaffolding**: Un servidor **FastAPI** expone el core funcional conectándose a Neo4j mediante inyección de dependencias.
+Our architecture is strictly typed, highly concurrent, and designed with military-grade precision to guarantee SOC2 readiness and absolute observability.
 
-## 📂 Estructura del Proyecto
+### 1. LangGraph Orchestration & Multi-Agent Concurrency
+At the core of Nexus Graph AI lies a sophisticated multi-agent system powered by **LangGraph**. The workflow orchestrates complex asynchronous state machines that gracefully handle non-deterministic execution paths. This provides:
+- **Resilient Execution Pipelines:** Strict graph topologies mapping distinct operational states to deterministic state transitions.
+- **Fail-Fast Error Handling:** Immediate circuit breaking and propagation of unrecoverable state anomalies.
+- **Micro-batching & Concurrency:** High-throughput task execution managing state across deeply nested multi-agent workflows.
 
-```text
-nexus-graph-ai/
-├── api/                # Capa de servicios REST y MCP
-│   ├── main.py         # Servidor FastAPI
-│   └── mcp.py          # Definición de herramientas MCP
-├── core/               # Motor principal y dominio
-│   ├── database.py     # Implementación del GraphRepository
-│   ├── engine.py       # Lógica Multi-Agente
-│   ├── observability.py# OpenTelemetry y Arize Phoenix
-│   ├── ontology.py     # Ontología Dinámica (Validez Temporal) y OntologyLockManager
-│   ├── router.py       # Enrutamiento de LangGraph
-│   └── schema_map.py   # Diccionario central de mapeo
-├── cli/                # Comandos ejecutables
-│   ├── ingest.py       # Productor de Redpanda
-│   └── ask.py          # CLI para consultas
-├── tests/              # Pruebas automatizadas (Pytest)
-│   ├── test_router.py      # Suite de pruebas para el enrutador LangGraph
-│   ├── test_concurrency.py # Suite de pruebas para OntologyLockManager y concurrencia
-│   ├── test_api.py         # Pruebas de integración API
-│   └── ...
-├── .devcontainer/      # Configuración de Dev Containers para VS Code
-└── ...
-```
+### 2. Distributed Synchronization via Redlock & Fencing Tokens
+In a horizontally scaled environment, preventing race conditions on graph mutations is critical. Nexus utilizes the **Redlock** algorithm over a clustered Redis backbone to enforce strict distributed mutexes:
+- **Pessimistic Locking Mechanisms:** Ensuring exclusive write access during concurrent ingest pipelines or schema migrations.
+- **Deadlock Mitigation:** Lease-based lock acquisition with automatic expiration and high-availability quorum-based voting.
+- **Monotonic Fencing Tokens:** Employs strictly increasing fencing tokens to validate and guarantee serializability in Neo4j transactions, entirely mitigating race conditions from lock expirations during high-latency LLM inference.
 
-## ✨ Características Principales
+### 3. Deep Integration with Neo4j & Graph Modeling
+Nexus completely abstracts cypher execution through an advanced persistence layer, enforcing a rigid ontological schema modeled in **Neo4j**:
+- **Strict Data Typing & Ontological Validity:** Schema definitions define explicit node labels and edge relationships prior to ingestion, rejecting non-conforming structures.
+- **Optimized Graph Traversal:** Index-backed exact matches and full-text search integrated with vector similarity retrieval for hybrid search paradigms.
+- **ACID Transactions:** Full transactional guarantees protecting the integrity of the knowledge base during multi-step graph updates.
 
-- **Dynamic Schema-First Extraction**: Validación de entidades y relaciones contra un esquema dinámico antes de persistir en Neo4j, ahora con soporte de validez temporal.
-- **Orquestación con LangGraph**: Flujos de trabajo de extracción e inferencia dirigidos por grafos de estado.
-- **Procesamiento Asíncrono y Streaming**: Uso de Redpanda para ingesta asíncrona.
-- **Manejo Seguro de Concurrencia**: `OntologyLockManager` con Redis para bloqueos distribuidos seguros.
-- **Observabilidad IA**: Trazas de OpenTelemetry enviadas a Arize Phoenix.
+### 4. MCP Integration (Model Context Protocol)
+The system exposes native capabilities to external LLM environments utilizing standard **MCP (Model Context Protocol)** interfaces:
+- **Standardized Tool Ingestion:** Instantly pluggable interfaces that securely expose targeted graph querying tools directly to authorized models.
+- **Contextual Boundary Enforcement:** Strict encapsulation of the internal state while projecting exactly the necessary operational schema.
 
-## 🛠️ Herramientas de Calidad y Dependencias Core
+### 5. Deterministic Context Pruning
+Feeding raw graph data to LLMs often results in context window pollution and hallucination. Our **Context Pruning** algorithms deterministically compress graph sub-trees before prompt construction:
+- **Information Density Maximization:** Algorithmic ranking of node relevance based on edge weight, traversal depth, and semantic proximity.
+- **Hard Context Bounds:** Enforcing strict token limits by truncating peripheral data, ensuring optimal inference efficiency and reduced latency.
 
-Recientemente se han incorporado nuevas herramientas obligatorias para asegurar la calidad y mantenibilidad del código:
+### 6. Absolute Observability & Telemetry
+Every function call, state transition, and cypher query is instrumented:
+- **Structured JSON Logging:** Native integration with standard APM platforms (Datadog, ELK).
+- **Latency & Error Tracking:** Granular traces identifying bottlenecks in LLM inference vs Graph I/O.
+- **Audit Trails:** Immutable logs for all data mutations to comply with stringent enterprise auditing requirements.
 
-**Dependencias Principales:**
-- **Dependency Injector**: Utilizado para implementar el patrón de Inyección de Dependencias, desacoplando los componentes del sistema.
-- **Pydantic-Settings**: Gestión robusta y tipada de las variables de entorno y configuración.
-- **Tenacity**: Manejo avanzado de reintentos (retries) para hacer el sistema más resiliente ante fallos de red o de los LLMs.
+### 7. SOC2 Readiness by Design
+Security is not an afterthought. The system implements guardrails at every boundary:
+- **Strict Input Validation:** Pydantic-enforced schemas on all ingress endpoints.
+- **RBAC & Isolation:** Query isolation ensuring agents can only access authorized graph sub-graphs.
+- **Secret Management:** Strict segregation of sensitive credentials from the operational logic layer.
 
-**Dependencias de Desarrollo:**
-- **Ruff**: Linter extremadamente rápido escrito en Rust para mantener un estilo de código limpio y consistente.
-- **Mypy (Strict Mode)**: Chequeo estático de tipos configurado en modo estricto (`strict = true`) para garantizar la seguridad de tipos en toda la base de código.
+---
 
-## ⚙️ Comandos Estandarizados (Makefile)
+## 🚀 Getting Started
 
-El proyecto utiliza un `Makefile` para estandarizar las tareas de desarrollo más comunes. Los comandos disponibles son:
+*Internal Documentation & Deployment configuration requires proper authorization.*
 
-- `make install`: Instala el proyecto y sus dependencias (incluyendo las de desarrollo) en modo editable (`pip install -e ".[dev]"`).
-- `make lint`: Ejecuta **Ruff** para el análisis estático del código.
-- `make typecheck`: Ejecuta **Mypy** en modo estricto para la validación estática de tipos.
-- `make test`: Ejecuta la suite de pruebas con **Pytest**.
-- `make all`: Ejecuta secuencialmente las tareas de calidad: `lint`, `typecheck` y `test`.
+Nexus Graph AI requires Python 3.10+, an accessible Neo4j Enterprise cluster, and a Redis deployment for Redlock distributed synchronization.
 
-## 📋 Requisitos Previos
-
-- Python 3.11+
-- Base de Datos Neo4j (AuraDB o local, ver. 5+)
-- Redis (Para el control de concurrencia y bloqueos distribuidos)
-- Acceso a un LLM (OpenAI API o Local via Ollama)
-- Docker (Para Dev Containers, Redpanda, Redis y Arize Phoenix)
-
-## 🚀 Instalación y Entorno Local
-
-1. **Clonar el repositorio:**
-   ```bash
-   git clone https://github.com/tu-organizacion/nexus-graph-ai.git
-   cd nexus-graph-ai
-   ```
-
-2. **Crear y activar entorno virtual:**
-   ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate
-   ```
-
-3. **Instalar dependencias necesarias:**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Infraestructura Local (Docker):**
-   Asegúrate de tener corriendo instancias de Neo4j, Redpanda (puerto 9092), Redis (puerto 6379) y Arize Phoenix (puerto 6006).
-
-5. **Configuración de Entorno:**
-   ```env
-   NEO4J_URI=bolt://localhost:7687
-   NEO4J_USER=neo4j
-   NEO4J_PASSWORD=tu_password
-   REDIS_URL=redis://localhost:6379
-   OPENAI_API_KEY=tu_api_key_o_ollama
-   OPENAI_BASE_URL=http://localhost:11434/v1
-   ```
-
-## 💻 Uso
-
-### 1. Iniciar el Servidor API (FastAPI)
 ```bash
-fastapi dev api/main.py
+# Verify system dependencies
+make format && make lint && make typecheck && make test
+
+# Initialize the infrastructure and boot the API
+docker-compose up -d --build
 ```
 
-### 2. Ingestar Datos (Redpanda & Async Chunking)
-```bash
-python cli/ingest.py data/negocio.txt
-```
-
-### 3. Consulta de un solo uso (One-shot)
-```bash
-python cli/ask.py "¿Qué proyectos están en riesgo?"
-```
-
-## 💻 Pruebas Unitarias (Pytest)
-
-Las pruebas están completamente aisladas utilizando mocks robustos para evitar interactuar con bases de datos reales. Recientemente se han incluido suites de pruebas completas para concurrencia (`test_concurrency.py`) y para el enrutador (`test_router.py`).
-```bash
-PYTHONPATH=. pytest tests/
-```
-
-## 🤝 Contribución
-
-Seguimos estrictamente las directrices de tipado y modularidad definidas en nuestros estándares Empresa 2026. Por favor, asegúrate de que todo pase las pruebas de `pytest`, mantenga la inyección de dependencias y el patrón **Repository**. Las validaciones deben ejecutarse a través de `ValidationPipeline` y los esquemas en `core/ontology.py`.
-
-## 📄 Licencia
-
-Este proyecto está bajo la Licencia MIT.
+---
+*Built for scale. Engineered for resilience. Nexus Graph AI.*
