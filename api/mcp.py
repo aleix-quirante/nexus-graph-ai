@@ -1,0 +1,286 @@
+import logging
+from typing import Dict, List, Union
+
+from fastapi import APIRouter, Request, HTTPException, Depends
+from starlette.responses import Response
+
+from mcp.server import Server
+from mcp.server.sse import SseServerTransport
+from mcp.types import Tool, TextContent
+from mcp.server.models import InitializationOptions
+from pydantic import BaseModel, Field
+
+from neo4j import AsyncDriver
+
+logger = logging.getLogger(__name__)
+
+PropertyType = Union[str, int, float, bool]
+
+# --- Pydantic Schemas ---
+
+
+class ReadGraphNodeInput(BaseModel):
+    node_id: str = Field(..., description="ID del nodo a leer del grafo")
+
+
+class WriteGraphEdgeInput(BaseModel):
+    source_id: str = Field(..., description="ID del nodo origen")
+    target_id: str = Field(..., description="ID del nodo destino")
+    edge_type: str = Field(
+        ..., description="Tipo de relacion en formato UPPERCASE_SNAKE_CASE"
+    )
+    properties: Dict[str, PropertyType] = Field(
+        default_factory=dict, description="Propiedades extra para la relacion"
+    )
+
+
+class QuerySubgraphInput(BaseModel):
+    cypher_query: str = Field(
+        ..., description="Consulta cypher segura a ejecutar en el grafo"
+    )
+
+
+class GraphNodeOutput(BaseModel):
+    id: str
+    label: str
+    properties: Dict[str, PropertyType]
+
+
+class GraphEdgeOutput(BaseModel):
+    source_id: str
+    target_id: str
+    type: str
+    properties: Dict[str, PropertyType]
+
+
+class QueryOutput(BaseModel):
+    records: List[Dict[str, PropertyType]]
+
+
+# --- Abstraction Layer ---
+
+
+from core.ontology import lock_manager
+
+
+class MCPGraphService:
+    def __init__(self, driver: AsyncDriver):
+        self.driver = driver
+
+    async def read_node(self, node_id: str) -> GraphNodeOutput:
+        query = "MATCH (n {id: $node_id}) RETURN labels(n) as labels, n as properties"
+        async with self.driver.session() as session:
+            result = await session.run(query, node_id=node_id)
+            record = await result.single()
+            if not record:
+                raise ValueError(f"Node {node_id} not found")
+
+            props = dict(record["properties"])
+            label = record["labels"][0] if record["labels"] else "UNKNOWN"
+            filtered_props = {
+                k: v for k, v in props.items() if isinstance(v, (str, int, float, bool))
+            }
+            return GraphNodeOutput(id=node_id, label=label, properties=filtered_props)
+
+    async def write_edge(
+        self,
+        source_id: str,
+        target_id: str,
+        edge_type: str,
+        properties: Dict[str, PropertyType],
+    ) -> GraphEdgeOutput:
+
+        async def _execute_edge_mutation(tx):
+            # Check if nodes exist (dummy creation of nodes to emulate dynamic ontology expansion if they don't exist)
+            query_nodes = """
+            MERGE (a:DYNAMIC_NODE {id: $source_id})
+            MERGE (b:DYNAMIC_NODE {id: $target_id})
+            """
+            await tx.run(query_nodes, source_id=source_id, target_id=target_id)
+
+            query = (
+                f"MATCH (a {{id: $source_id}}), (b {{id: $target_id}}) "
+                f"MERGE (a)-[r:{edge_type}]->(b) "
+                f"SET r += $properties "
+                f"RETURN r"
+            )
+            result = await tx.run(
+                query, source_id=source_id, target_id=target_id, properties=properties
+            )
+            return await result.single()
+
+        # Distributed lock keyed by the relationship edge_type to guarantee Ontology Consensus
+        async with lock_manager.acquire(edge_type):
+            async with self.driver.session() as session:
+                record = await session.execute_write(_execute_edge_mutation)
+                if not record:
+                    raise ValueError(
+                        "Could not create edge. Check if source and target nodes exist."
+                    )
+
+        return GraphEdgeOutput(
+            source_id=source_id,
+            target_id=target_id,
+            type=edge_type,
+            properties=properties,
+        )
+
+    async def query_subgraph(self, cypher: str) -> QueryOutput:
+        if any(
+            keyword in cypher.upper()
+            for keyword in ["CREATE", "MERGE", "DELETE", "SET", "DROP"]
+        ):
+            raise ValueError(
+                "Solo se permiten consultas de lectura (MATCH/RETURN) en query_subgraph"
+            )
+
+        async with self.driver.session() as session:
+            result = await session.run(cypher)
+            records = await result.values()
+
+            output_records: List[Dict[str, PropertyType]] = []
+            for idx, r in enumerate(records):
+                output_records.append({"result_index": idx, "value": str(r)})
+
+            return QueryOutput(records=output_records)
+
+
+# --- MCP Server ---
+mcp_server = Server("nexus-graph-mcp")
+
+
+@mcp_server.list_tools()
+async def handle_list_tools() -> list[Tool]:
+    return [
+        Tool(
+            name="read_graph_node",
+            description="Lee las propiedades y etiqueta de un nodo especifico usando su ID",
+            inputSchema=ReadGraphNodeInput.model_json_schema(),
+        ),
+        Tool(
+            name="write_graph_edge",
+            description="Escribe una nueva relacion direccional entre dos nodos existentes",
+            inputSchema=WriteGraphEdgeInput.model_json_schema(),
+        ),
+        Tool(
+            name="query_subgraph",
+            description="Ejecuta una consulta Cypher de solo lectura para extraer un subgrafo",
+            inputSchema=QuerySubgraphInput.model_json_schema(),
+        ),
+    ]
+
+
+_global_db_driver: AsyncDriver | None = None
+
+
+def set_mcp_db_driver(driver: AsyncDriver) -> None:
+    global _global_db_driver
+    _global_db_driver = driver
+
+
+@mcp_server.call_tool()
+async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
+    if not _global_db_driver:
+        return [
+            TextContent(
+                type="text",
+                text="Error: Database driver not initialized in MCP context",
+            )
+        ]
+
+    service = MCPGraphService(_global_db_driver)
+
+    try:
+        if name == "read_graph_node":
+            data = ReadGraphNodeInput.model_validate(arguments)
+            out = await service.read_node(data.node_id)
+            return [TextContent(type="text", text=out.model_dump_json())]
+
+        elif name == "write_graph_edge":
+            data = WriteGraphEdgeInput.model_validate(arguments)
+            out = await service.write_edge(
+                data.source_id, data.target_id, data.edge_type, data.properties
+            )
+            return [TextContent(type="text", text=out.model_dump_json())]
+
+        elif name == "query_subgraph":
+            data = QuerySubgraphInput.model_validate(arguments)
+            out = await service.query_subgraph(data.cypher_query)
+            return [TextContent(type="text", text=out.model_dump_json())]
+
+        else:
+            raise ValueError(f"Unknown tool: {name}")
+
+    except Exception as e:
+        return [
+            TextContent(type="text", text=f"Error processing tool {name}: {str(e)}")
+        ]
+
+
+# --- FastAPI Integration & RBAC ---
+
+from starlette.routing import Mount
+
+mcp_router = APIRouter()
+
+
+def get_rbac_role(request: Request) -> str:
+    role = request.headers.get("X-MCP-Role")
+    if not role or role not in ["admin", "agent"]:
+        raise HTTPException(
+            status_code=403,
+            detail="Acceso Denegado: Se requiere un rol valido en X-MCP-Role",
+        )
+    return role
+
+
+sse_transport = SseServerTransport("/mcp/messages")
+
+
+@mcp_router.get("/sse")
+async def mcp_sse(request: Request, role: str = Depends(get_rbac_role)) -> Response:
+    async with sse_transport.connect_sse(
+        request.scope, request.receive, request._send
+    ) as streams:
+        options = InitializationOptions(
+            server_name="nexus-graph-mcp",
+            server_version="1.0.0",
+            capabilities=mcp_server.get_capabilities(),
+        )
+        await mcp_server.run(streams[0], streams[1], options)
+    return Response()
+
+
+@mcp_router.post("/messages")
+@mcp_router.post("/messages/")
+async def mcp_messages(
+    request: Request, role: str = Depends(get_rbac_role)
+) -> Response:
+    response_data = {"status": 200, "headers": [], "body": b""}
+
+    async def dummy_send(message: dict) -> None:
+        if message["type"] == "http.response.start":
+            response_data["status"] = message["status"]
+            response_data["headers"] = message.get("headers", [])
+        elif message["type"] == "http.response.body":
+            response_data["body"] += message.get("body", b"")
+
+    await sse_transport.handle_post_message(request.scope, request.receive, dummy_send)
+
+    headers = {
+        k.decode("utf-8"): v.decode("utf-8")
+        for k, v in response_data["headers"]
+        if k.decode("utf-8").lower() not in ["content-length", "content-type"]
+    }
+
+    content_type = "text/plain"
+    for k, v in response_data["headers"]:
+        if k.decode("utf-8").lower() == "content-type":
+            content_type = v.decode("utf-8")
+
+    return Response(
+        content=response_data["body"],
+        status_code=response_data["status"],
+        headers=headers,
+        media_type=content_type,
+    )

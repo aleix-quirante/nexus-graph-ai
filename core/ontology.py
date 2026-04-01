@@ -1,5 +1,6 @@
 from typing import Any, Dict, List, Optional, Type, Set
 from pydantic import BaseModel, Field, create_model
+from datetime import datetime
 
 
 class EntitySchema(BaseModel):
@@ -7,6 +8,9 @@ class EntitySchema(BaseModel):
     aliases: List[str] = Field(default_factory=list)
     description: str = ""
     properties: Dict[str, Type] = Field(default_factory=dict)
+    valid_from: datetime = Field(default_factory=datetime.utcnow)
+    valid_until: Optional[datetime] = Field(default=None)
+    confidence_score: float = Field(default=1.0, ge=0.0, le=1.0)
 
 
 class RelationshipSchema(BaseModel):
@@ -15,6 +19,9 @@ class RelationshipSchema(BaseModel):
     description: str = ""
     allowed_sources: List[str] = Field(default_factory=list)
     allowed_targets: List[str] = Field(default_factory=list)
+    valid_from: datetime = Field(default_factory=datetime.utcnow)
+    valid_until: Optional[datetime] = Field(default=None)
+    confidence_score: float = Field(default=1.0, ge=0.0, le=1.0)
 
 
 class OntologyRegistry:
@@ -84,6 +91,56 @@ class OntologyRegistry:
             },
         }
 
+
+import os
+import asyncio
+from contextlib import asynccontextmanager
+
+
+class OntologyLockManager:
+    def __init__(self):
+        self.redis_url = os.getenv("REDIS_URL")
+        self.redis = None
+        self._local_locks: Dict[str, asyncio.Lock] = {}
+        self._global_lock = asyncio.Lock()
+
+    async def connect(self):
+        if self.redis_url:
+            try:
+                import redis.asyncio as aioredis
+
+                self.redis = aioredis.from_url(self.redis_url)
+                await self.redis.ping()
+                print("✅ Conectado a Redis para Distributed Locks de Ontología")
+            except Exception as e:
+                print(f"⚠️ Fallo al conectar a Redis: {e}. Usando fallback asyncio.Lock")
+                self.redis = None
+
+    @asynccontextmanager
+    async def acquire(self, lock_key: str):
+        if self.redis:
+            # Requires redis library installed. We assume it is or will fallback if import fails.
+            lock = self.redis.lock(f"ontology_lock:{lock_key}", timeout=10.0)
+            await lock.acquire()
+            try:
+                yield
+            finally:
+                try:
+                    await lock.release()
+                except Exception:
+                    pass
+        else:
+            async with self._global_lock:
+                if lock_key not in self._local_locks:
+                    self._local_locks[lock_key] = asyncio.Lock()
+                local_lock = self._local_locks[lock_key]
+
+            async with local_lock:
+                yield
+
+
+# Global lock manager instance
+lock_manager = OntologyLockManager()
 
 # Instantiate the global registry and populate it with default B2B domain
 registry = OntologyRegistry()

@@ -8,53 +8,60 @@ Nexus Graph AI es una plataforma de vanguardia que combina Bases de Datos Orient
 
 ## 🏗️ Arquitectura de Referencia
 
-Nuestra arquitectura está diseñada para ofrecer escalabilidad extrema, modularidad y procesamiento enfocado en IA. Recientemente, el proyecto ha evolucionado para incluir streaming de eventos, observabilidad avanzada y una capa de API robusta:
+Nuestra arquitectura está diseñada para ofrecer escalabilidad extrema, modularidad y procesamiento enfocado en IA. Recientemente, el proyecto ha evolucionado para incluir streaming de eventos, observabilidad avanzada, una capa de API robusta, control de concurrencia avanzado y enrutamiento inteligente:
 
 - **Repository Pattern & DI**: Desacoplamiento de la base de datos mediante el protocolo abstracto `GraphRepository` (implementado en `Neo4jRepository`). Las dependencias se inyectan en tiempo de ejecución, facilitando el testing aislado.
 - **Ontología Dinámica y Auto-Recovery**: Validación estricta de grafos utilizando Pydantic. Si el LLM genera estructuras inválidas, un bucle automático de recuperación (`max_retries`) solicita auto-corrección.
-- **Event-Driven Ingestion (Redpanda)**: El pipeline de ingesta ahora soporta particionado de documentos asíncrono y encolamiento a través de un productor de Redpanda, permitiendo procesar grandes volúmenes de texto de manera distribuida.
-- **Observabilidad Integral (Arize Phoenix)**: Instrumentación completa con **OpenTelemetry** y **OpenInference**. Trazas detalladas de llamadas a la API, workers de procesamiento y peticiones al LLM son enviadas a una instancia local de Arize Phoenix, garantizando visibilidad total sobre el rendimiento y los flujos de IA.
-- **API REST & MCP Scaffolding**: Un servidor **FastAPI** expone el core funcional (ej. health checks, descubrimiento MCP), conectándose a Neo4j mediante inyección de dependencias para un ciclo de vida seguro.
+- **Campos de Validez Temporal en la Ontología**: Soporte añadido para esquemas de ontología con campos de validez temporal (`valid_from`, `valid_until`), permitiendo la evolución histórica y seguimiento de datos en el tiempo en el modelo de conocimiento.
+- **Enrutamiento de Inferencia y Extracción (LangGraph)**: Integración profunda de **LangGraph** para orquestar y enrutar inteligentemente el flujo de extracción de entidades y relaciones, además de dirigir consultas de inferencia hacia agentes especializados, mejorando la modularidad y gestión de estado.
+- **Control de Concurrencia Distribuida (Redis)**: Implementación de un `OntologyLockManager` respaldado por **Redis** para prevenir condiciones de carrera y asegurar operaciones thread-safe durante la actualización concurrente del esquema de la ontología y el grafo.
+- **Event-Driven Ingestion (Redpanda)**: El pipeline de ingesta soporta particionado de documentos asíncrono y encolamiento a través de un productor de Redpanda, permitiendo procesar grandes volúmenes de texto de manera distribuida.
+- **Observabilidad Integral (Arize Phoenix)**: Instrumentación completa con **OpenTelemetry** y **OpenInference**. Trazas detalladas de llamadas a la API, workers de procesamiento y peticiones al LLM son enviadas a una instancia local de Arize Phoenix.
+- **API REST & MCP Scaffolding**: Un servidor **FastAPI** expone el core funcional conectándose a Neo4j mediante inyección de dependencias.
 
 ## 📂 Estructura del Proyecto
 
 ```text
 nexus-graph-ai/
-├── api/                # Capa de servicios REST
-│   └── main.py         # Servidor FastAPI con endpoints y setup de telemetría
+├── api/                # Capa de servicios REST y MCP
+│   ├── main.py         # Servidor FastAPI
+│   └── mcp.py          # Definición de herramientas MCP
 ├── core/               # Motor principal y dominio
-│   ├── database.py     # Implementación del GraphRepository y Neo4jRepository
+│   ├── database.py     # Implementación del GraphRepository
 │   ├── engine.py       # Lógica Multi-Agente
-│   ├── observability.py# Configuración de OpenTelemetry y exportación a Arize Phoenix
-│   ├── ontology.py     # Ontología Dinámica y validación de esquemas
-│   ├── schema_map.py   # Diccionario central de mapeo
-│   └── worker.py       # Procesamiento de tareas e instrumentación OpenInference
+│   ├── observability.py# OpenTelemetry y Arize Phoenix
+│   ├── ontology.py     # Ontología Dinámica (Validez Temporal) y OntologyLockManager
+│   ├── router.py       # Enrutamiento de LangGraph
+│   └── schema_map.py   # Diccionario central de mapeo
 ├── cli/                # Comandos ejecutables
-│   ├── ingest.py       # Productor de Redpanda y chunking asíncrono de documentos
-│   └── ask.py          # CLI para consultas interactivas
+│   ├── ingest.py       # Productor de Redpanda
+│   └── ask.py          # CLI para consultas
 ├── tests/              # Pruebas automatizadas (Pytest)
+│   ├── test_router.py      # Suite de pruebas para el enrutador LangGraph
+│   ├── test_concurrency.py # Suite de pruebas para OntologyLockManager y concurrencia
+│   ├── test_api.py         # Pruebas de integración API
+│   └── ...
 ├── .devcontainer/      # Configuración de Dev Containers para VS Code
 └── ...
 ```
 
 ## ✨ Características Principales
 
-- **Dynamic Schema-First Extraction**: Validación de entidades y relaciones contra un esquema dinámico antes de persistir en Neo4j.
-- **Procesamiento Asíncrono y Streaming**: Uso de Redpanda para ingesta asíncrona y particionamiento de documentos.
-- **Observabilidad IA**: Trazas de OpenTelemetry enviadas a Arize Phoenix para monitorear prompts, latencia y ejecución de agentes.
-- **Prevención de Cartesian Products**: Inyecciones seguras y atómicas en Neo4j.
-- **Desarrollo Consistente**: Soporte para **Dev Containers**, garantizando un entorno de desarrollo reproducible para todo el equipo.
+- **Dynamic Schema-First Extraction**: Validación de entidades y relaciones contra un esquema dinámico antes de persistir en Neo4j, ahora con soporte de validez temporal.
+- **Orquestación con LangGraph**: Flujos de trabajo de extracción e inferencia dirigidos por grafos de estado.
+- **Procesamiento Asíncrono y Streaming**: Uso de Redpanda para ingesta asíncrona.
+- **Manejo Seguro de Concurrencia**: `OntologyLockManager` con Redis para bloqueos distribuidos seguros.
+- **Observabilidad IA**: Trazas de OpenTelemetry enviadas a Arize Phoenix.
 
 ## 📋 Requisitos Previos
 
 - Python 3.11+
 - Base de Datos Neo4j (AuraDB o local, ver. 5+)
+- Redis (Para el control de concurrencia y bloqueos distribuidos)
 - Acceso a un LLM (OpenAI API o Local via Ollama)
-- Docker (Para Dev Containers, Redpanda y Arize Phoenix)
+- Docker (Para Dev Containers, Redpanda, Redis y Arize Phoenix)
 
 ## 🚀 Instalación y Entorno Local
-
-Puedes utilizar el entorno **Dev Container** incluido abriendo el proyecto en VS Code y seleccionando "Reopen in Container". Alternativamente, para una instalación manual:
 
 1. **Clonar el repositorio:**
    ```bash
@@ -74,14 +81,14 @@ Puedes utilizar el entorno **Dev Container** incluido abriendo el proyecto en VS
    ```
 
 4. **Infraestructura Local (Docker):**
-   Asegúrate de tener corriendo instancias de Neo4j, Redpanda (puerto 9092) y Arize Phoenix (puerto 6006 para trazas OTLP).
+   Asegúrate de tener corriendo instancias de Neo4j, Redpanda (puerto 9092), Redis (puerto 6379) y Arize Phoenix (puerto 6006).
 
 5. **Configuración de Entorno:**
-   Copia el archivo `.env.example` a `.env` y configura tus variables:
    ```env
    NEO4J_URI=bolt://localhost:7687
    NEO4J_USER=neo4j
    NEO4J_PASSWORD=tu_password
+   REDIS_URL=redis://localhost:6379
    OPENAI_API_KEY=tu_api_key_o_ollama
    OPENAI_BASE_URL=http://localhost:11434/v1
    ```
@@ -89,13 +96,11 @@ Puedes utilizar el entorno **Dev Container** incluido abriendo el proyecto en VS
 ## 💻 Uso
 
 ### 1. Iniciar el Servidor API (FastAPI)
-La API expone endpoints de salud e integración MCP, instrumentados con OpenTelemetry:
 ```bash
 fastapi dev api/main.py
 ```
 
 ### 2. Ingestar Datos (Redpanda & Async Chunking)
-Para particionar un documento y enviarlo a la cola de procesamiento asíncrono:
 ```bash
 python cli/ingest.py data/negocio.txt
 ```
@@ -105,15 +110,9 @@ python cli/ingest.py data/negocio.txt
 python cli/ask.py "¿Qué proyectos están en riesgo?"
 ```
 
-### 4. Aplicación Web (Streamlit)
-Levanta la interfaz web interactiva para explorar el grafo:
-```bash
-streamlit run app.py
-```
-
 ## 💻 Pruebas Unitarias (Pytest)
 
-Las pruebas están completamente aisladas utilizando mocks robustos para evitar interactuar con bases de datos reales.
+Las pruebas están completamente aisladas utilizando mocks robustos para evitar interactuar con bases de datos reales. Recientemente se han incluido suites de pruebas completas para concurrencia (`test_concurrency.py`) y para el enrutador (`test_router.py`).
 ```bash
 PYTHONPATH=. pytest tests/
 ```

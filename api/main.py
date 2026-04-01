@@ -37,6 +37,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Simple check on startup
     try:
         await db.driver.verify_connectivity()
+        from api.mcp import set_mcp_db_driver
+
+        set_mcp_db_driver(db.driver)
         print("✅ [NEXUS CORE] Conexión a Neo4j establecida con éxito.")
     except Exception as e:
         print(f"❌ [NEXUS CORE] Failed to connect to Neo4j on startup: {e}")
@@ -48,6 +51,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 app = FastAPI(lifespan=lifespan, title="Nexus Graph AI Enterprise")
+
+from api.mcp import mcp_router
+
+app.include_router(mcp_router, prefix="/mcp")
 
 try:
     from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -73,8 +80,3 @@ async def get_db_driver() -> AsyncGenerator[AsyncDriver, None]:
 @app.get("/health", tags=["System"])
 async def health_check() -> dict[str, str]:
     return {"status": "ok", "system": "Nexus Graph AI Core"}
-
-
-@app.get("/mcp/discover", tags=["MCP"])
-async def mcp_discover() -> dict[str, dict]:
-    return {"schema": {}}
