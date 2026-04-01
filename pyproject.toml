@@ -7,5 +7,40 @@ requires-python = ">=3.10"
 dependencies = [
     "pydantic-ai",
     "neo4j",
-    "python-dotenv"
+    "python-dotenv",
+    "pydantic-settings",
+    "tenacity",
+    "dependency-injector"
 ]
+
+[project.optional-dependencies]
+dev = [
+    "ruff",
+    "mypy",
+    "pytest",
+    "pytest-asyncio"
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+select = ["E", "F", "I", "W", "C90", "B"]
+ignore = []
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+show_error_codes = true
+
+[[tool.mypy.overrides]]
+module = "neo4j.*"
+ignore_missing_imports = true

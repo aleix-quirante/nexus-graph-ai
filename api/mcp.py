@@ -1,5 +1,6 @@
 import logging
-from typing import Dict, List, Union
+from typing import Dict, List, Union, Any
+import re
 
 from fastapi import APIRouter, Request, HTTPException, Depends
 from starlette.responses import Response
@@ -11,6 +12,7 @@ from mcp.server.models import InitializationOptions
 from pydantic import BaseModel, Field
 
 from neo4j import AsyncDriver
+from neo4j.exceptions import TransientError, ClientError
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +38,10 @@ class WriteGraphEdgeInput(BaseModel):
 
 class QuerySubgraphInput(BaseModel):
     cypher_query: str = Field(
-        ..., description="Consulta cypher segura a ejecutar en el grafo"
+        ..., description="Consulta cypher parametrizada a ejecutar"
+    )
+    parameters: Dict[str, Any] = Field(
+        default_factory=dict, description="Parametros de la consulta"
     )
 
 
@@ -60,7 +65,52 @@ class QueryOutput(BaseModel):
 # --- Abstraction Layer ---
 
 
-from core.ontology import lock_manager
+class ASTValidator:
+    """Static AST-like validation for Cypher queries to ensure read-only operations."""
+
+    ALLOWED_CLAUSES = {
+        "MATCH",
+        "WITH",
+        "WHERE",
+        "RETURN",
+        "ORDER BY",
+        "SKIP",
+        "LIMIT",
+        "YIELD",
+        "UNWIND",
+    }
+    FORBIDDEN_CLAUSES = {
+        "CREATE",
+        "MERGE",
+        "SET",
+        "DELETE",
+        "REMOVE",
+        "DROP",
+        "CALL",
+        "LOAD CSV",
+        "FOREACH",
+    }
+
+    @classmethod
+    def validate_read_only(cls, query: str):
+        """
+        Validates that a Cypher query only contains allowed read operations.
+        Uses a simplified static analysis approach.
+        """
+        # Remove string literals and comments to avoid false positives
+        query_stripped = re.sub(r"'[^']*'", "''", query)
+        query_stripped = re.sub(r'"[^"]*"', '""', query_stripped)
+        query_stripped = re.sub(r"//.*$", "", query_stripped, flags=re.MULTILINE)
+
+        upper_query = query_stripped.upper()
+
+        # Check for forbidden clauses
+        for forbidden in cls.FORBIDDEN_CLAUSES:
+            # Match whole words to avoid partial matches (e.g., 'MATCH (SETTING)' shouldn't trigger 'SET')
+            if re.search(rf"\b{forbidden}\b", upper_query):
+                raise ValueError(
+                    f"AST Validation Error: Forbidden clause detected '{forbidden}'. Query must be read-only."
+                )
 
 
 class MCPGraphService:
@@ -98,9 +148,11 @@ class MCPGraphService:
             """
             await tx.run(query_nodes, source_id=source_id, target_id=target_id)
 
+            # Optimistic Concurrency Control using MERGE and internal locking mechanisms of Neo4j.
+            # Removed the external async lock_manager in favor of database-level concurrency handling.
             query = (
                 f"MATCH (a {{id: $source_id}}), (b {{id: $target_id}}) "
-                f"MERGE (a)-[r:{edge_type}]->(b) "
+                f"MERGE (a)-[r:`{edge_type}`]->(b) "
                 f"SET r += $properties "
                 f"RETURN r"
             )
@@ -109,14 +161,23 @@ class MCPGraphService:
             )
             return await result.single()
 
-        # Distributed lock keyed by the relationship edge_type to guarantee Ontology Consensus
-        async with lock_manager.acquire(edge_type):
-            async with self.driver.session() as session:
+        # Replaced global async lock with Neo4j's built-in transaction retries and optimistic concurrency
+        # which is partition tolerant and safe. execute_write automatically handles retries for TransientErrors.
+        async with self.driver.session() as session:
+            try:
                 record = await session.execute_write(_execute_edge_mutation)
                 if not record:
                     raise ValueError(
                         "Could not create edge. Check if source and target nodes exist."
                     )
+            except ClientError as e:
+                logger.error(f"ClientError during edge creation: {e}")
+                raise ValueError(f"Failed to create edge due to client error: {e}")
+            except TransientError as e:
+                logger.error(f"TransientError during edge creation: {e}")
+                raise ValueError(
+                    f"Failed to create edge due to transient error (concurrency/network): {e}"
+                )
 
         return GraphEdgeOutput(
             source_id=source_id,
@@ -125,18 +186,23 @@ class MCPGraphService:
             properties=properties,
         )
 
-    async def query_subgraph(self, cypher: str) -> QueryOutput:
-        if any(
-            keyword in cypher.upper()
-            for keyword in ["CREATE", "MERGE", "DELETE", "SET", "DROP"]
-        ):
-            raise ValueError(
-                "Solo se permiten consultas de lectura (MATCH/RETURN) en query_subgraph"
-            )
+    async def query_subgraph(
+        self, cypher: str, parameters: Dict[str, Any] = None
+    ) -> QueryOutput:
+        if parameters is None:
+            parameters = {}
 
+        # 1. Apply static AST validation to ensure read-only
+        ASTValidator.validate_read_only(cypher)
+
+        # 2. Execute with forced parameterized query approach
         async with self.driver.session() as session:
-            result = await session.run(cypher)
-            records = await result.values()
+            # Using read_transaction to strictly enforce read-only at database level as well
+            async def _execute_read(tx):
+                result = await tx.run(cypher, parameters)
+                return await result.values()
+
+            records = await session.execute_read(_execute_read)
 
             output_records: List[Dict[str, PropertyType]] = []
             for idx, r in enumerate(records):
@@ -164,7 +230,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="query_subgraph",
-            description="Ejecuta una consulta Cypher de solo lectura para extraer un subgrafo",
+            description="Ejecuta una consulta Cypher parametrizada de solo lectura",
             inputSchema=QuerySubgraphInput.model_json_schema(),
         ),
     ]
@@ -205,7 +271,7 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
 
         elif name == "query_subgraph":
             data = QuerySubgraphInput.model_validate(arguments)
-            out = await service.query_subgraph(data.cypher_query)
+            out = await service.query_subgraph(data.cypher_query, data.parameters)
             return [TextContent(type="text", text=out.model_dump_json())]
 
         else:

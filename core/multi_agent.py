@@ -2,6 +2,7 @@ import asyncio
 from typing import Optional, Literal, Dict, Any, List
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext
+import re
 
 # Nota: En un entorno real, configuraríamos los modelos usando variables de entorno o configuración.
 # Para este ejemplo, utilizamos identificadores de modelos de OpenAI.
@@ -51,7 +52,8 @@ class ComplexReasoningResult(BaseModel):
     """Resultado final del Especialista en Razonamiento Iterativo."""
 
     steps_taken: List[ReasoningStep] = Field(
-        description="Historial de los pasos de razonamiento tomados para llegar a la respuesta."
+        description="Historial de los pasos de razonamiento tomados para llegar a la respuesta.",
+        max_length=10,  # Limitar número de pasos de razonamiento (OWASP LLM04:2025 DoS prevention)
     )
     final_answer: str = Field(
         description="La respuesta final sintetizada para el usuario."
@@ -99,6 +101,7 @@ reasoning_specialist = Agent(
         "Resuelves problemas complejos y ambiguos dividiéndolos en pasos lógicos. "
         "Para cada problema, debes formular hipótesis, determinar las acciones necesarias (como consultar la BD o sintetizar información) "
         "y finalmente proporcionar una respuesta completa y fundamentada. Tu salida debe reflejar estrictamente cada paso de tu proceso cognitivo."
+        "IMPORTANTE: No superes el límite de 10 pasos de razonamiento bajo ninguna circunstancia."
     ),
 )
 
@@ -106,17 +109,48 @@ reasoning_specialist = Agent(
 
 
 class MultiAgentSystem:
-    """Clase principal que coordina el flujo de los agentes."""
+    """Clase principal que coordina el flujo de los agentes con enfoque Zero-Trust."""
+
+    MAX_QUERY_LENGTH = 1000  # Prevenir agotamiento de recursos o exploits largos
+
+    def sanitize_input(self, user_query: str) -> str:
+        """
+        Input Sanitization: Prevenir secuestro de prompts, limpiar caracteres invisibles,
+        limitar longitud y prevenir DoS (LLM04).
+        """
+        if not user_query or not isinstance(user_query, str):
+            raise ValueError("Invalid query format.")
+
+        # Limitar tamaño de entrada
+        if len(user_query) > self.MAX_QUERY_LENGTH:
+            raise ValueError(
+                f"Query exceeds maximum allowed length of {self.MAX_QUERY_LENGTH} characters."
+            )
+
+        # Limpiar caracteres de control o inusuales (básica sanitización)
+        sanitized = re.sub(r"[\x00-\x1F\x7F]", "", user_query)
+        return sanitized
 
     async def process_query(self, user_query: str) -> Dict[str, Any]:
         """
         Punto de entrada asíncrono. Evalúa la consulta y la delega al agente correspondiente.
         """
-        print(f"\n[Sistema] Analizando consulta: '{user_query}'")
+        print(f"\n[Sistema] Analizando consulta original...")
+
+        try:
+            # 0. Zero-Trust: Input Sanitization
+            safe_query = self.sanitize_input(user_query)
+        except ValueError as e:
+            return {"status": "error", "message": str(e)}
+
+        # Envolvemos el input del usuario en delimitadores seguros para Context Validation y prevención de Prompt Injection
+        secure_prompt = (
+            f"--- USER INPUT BEGIN ---\n{safe_query}\n--- USER INPUT END ---"
+        )
 
         # 1. Enrutamiento (Baja latencia y coste)
         # Ejecutamos de forma asíncrona usando Pydantic-AI
-        route_result = await router_agent.run(user_query)
+        route_result = await router_agent.run(secure_prompt)
         decision: RouteDecision = route_result.data
 
         print(
@@ -135,10 +169,11 @@ class MultiAgentSystem:
 
         elif decision.complexity == "cypher_read":
             print("[Sistema] Delegando al Especialista en Cypher...")
-            # Enriquecemos el contexto con las entidades extraídas por el router
+            # Enriquecemos el contexto con las entidades extraídas por el router y mantenemos los delimitadores seguros
             enriched_prompt = (
                 f"Entidades identificadas: {', '.join(decision.extracted_entities)}\n"
-                f"Consulta del usuario: {user_query}"
+                f"Consulta del usuario para generar Cypher:\n"
+                f"--- USER INPUT BEGIN ---\n{safe_query}\n--- USER INPUT END ---"
             )
             cypher_result = await cypher_specialist.run(enriched_prompt)
             cypher_data: CypherQuery = cypher_result.data
@@ -153,7 +188,8 @@ class MultiAgentSystem:
             print(
                 "[Sistema] Delegando al Especialista en Razonamiento Iterativo (Modelo Pesado)..."
             )
-            reasoning_result = await reasoning_specialist.run(user_query)
+            # Pasamos la consulta con delimitadores seguros al agente de razonamiento
+            reasoning_result = await reasoning_specialist.run(secure_prompt)
             reasoning_data: ComplexReasoningResult = reasoning_result.data
             return {
                 "status": "success",
