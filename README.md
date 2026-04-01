@@ -53,6 +53,29 @@ nexus-graph-ai/
 - **Manejo Seguro de Concurrencia**: `OntologyLockManager` con Redis para bloqueos distribuidos seguros.
 - **Observabilidad IA**: Trazas de OpenTelemetry enviadas a Arize Phoenix.
 
+## 🛠️ Herramientas de Calidad y Dependencias Core
+
+Recientemente se han incorporado nuevas herramientas obligatorias para asegurar la calidad y mantenibilidad del código:
+
+**Dependencias Principales:**
+- **Dependency Injector**: Utilizado para implementar el patrón de Inyección de Dependencias, desacoplando los componentes del sistema.
+- **Pydantic-Settings**: Gestión robusta y tipada de las variables de entorno y configuración.
+- **Tenacity**: Manejo avanzado de reintentos (retries) para hacer el sistema más resiliente ante fallos de red o de los LLMs.
+
+**Dependencias de Desarrollo:**
+- **Ruff**: Linter extremadamente rápido escrito en Rust para mantener un estilo de código limpio y consistente.
+- **Mypy (Strict Mode)**: Chequeo estático de tipos configurado en modo estricto (`strict = true`) para garantizar la seguridad de tipos en toda la base de código.
+
+## ⚙️ Comandos Estandarizados (Makefile)
+
+El proyecto utiliza un `Makefile` para estandarizar las tareas de desarrollo más comunes. Los comandos disponibles son:
+
+- `make install`: Instala el proyecto y sus dependencias (incluyendo las de desarrollo) en modo editable (`pip install -e ".[dev]"`).
+- `make lint`: Ejecuta **Ruff** para el análisis estático del código.
+- `make typecheck`: Ejecuta **Mypy** en modo estricto para la validación estática de tipos.
+- `make test`: Ejecuta la suite de pruebas con **Pytest**.
+- `make all`: Ejecuta secuencialmente las tareas de calidad: `lint`, `typecheck` y `test`.
+
 ## 📋 Requisitos Previos
 
 - Python 3.11+
