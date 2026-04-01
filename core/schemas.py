@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any
+from core.ontology import AllowedNodeLabels
 
 
 class Node(BaseModel):
@@ -7,9 +8,9 @@ class Node(BaseModel):
         ...,
         description="ID único, normalizado en snake_case y minúsculas (ej. 'empresa_techcorp'). Crucial para enlaces.",
     )
-    label: str = Field(
+    label: AllowedNodeLabels = Field(
         ...,
-        description="Categoría semántica en MAYÚSCULAS (ej. 'EMPRESA', 'CONTRATO', 'RIESGO').",
+        description="Categoría semántica obligatoria del nodo, validada contra el Enum AllowedNodeLabels.",
     )
     properties: Dict[str, Any] = Field(
         default_factory=dict,

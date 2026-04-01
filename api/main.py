@@ -8,9 +8,9 @@ from typing import AsyncGenerator, Callable
 from dotenv import load_dotenv
 from fastapi import FastAPI, Depends, Request, Response
 from neo4j import AsyncGraphDatabase, AsyncDriver
-from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from core.observability import setup_telemetry
+from core.config import settings
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -20,19 +20,6 @@ logger = logging.getLogger(__name__)
 setup_telemetry("nexus-api")
 
 load_dotenv(override=True)
-
-
-class Settings(BaseSettings):
-    neo4j_uri: str
-    neo4j_user: str
-    neo4j_password: str
-
-    model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore"
-    )
-
-
-settings = Settings()
 
 
 class Database:
@@ -45,7 +32,7 @@ db = Database()
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     db.driver = AsyncGraphDatabase.driver(
-        settings.neo4j_uri, auth=(settings.neo4j_user, settings.neo4j_password)
+        settings.NEO4J_URI, auth=(settings.NEO4J_USER, settings.NEO4J_PASSWORD)
     )
 
     # Simple check on startup

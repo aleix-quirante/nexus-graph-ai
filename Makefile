@@ -1,7 +1,8 @@
-.PHONY: install lint typecheck test all
+.PHONY: install lint typecheck test format
 
 install:
-	pip install -e ".[dev]"
+	pip install -r requirements.txt
+	pip install pydantic-settings ruff mypy pytest
 
 lint:
 	ruff check .
@@ -12,4 +13,5 @@ typecheck:
 test:
 	pytest tests/
 
-all: lint typecheck test
+format:
+	ruff format .

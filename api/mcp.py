@@ -11,6 +11,8 @@ from mcp.types import Tool, TextContent
 from mcp.server.models import InitializationOptions
 from pydantic import BaseModel, Field
 
+from core.ontology import AllowedNodeLabels
+
 from neo4j import AsyncDriver
 from neo4j.exceptions import TransientError, ClientError
 
@@ -47,7 +49,7 @@ class QuerySubgraphInput(BaseModel):
 
 class GraphNodeOutput(BaseModel):
     id: str
-    label: str
+    label: AllowedNodeLabels
     properties: Dict[str, PropertyType]
 
 

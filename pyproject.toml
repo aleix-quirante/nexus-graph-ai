@@ -1,46 +1,29 @@
 [project]
 name = "nexus-graph-ai"
 version = "0.1.0"
-description = "Graph AI Extractor with Pydantic AI and Neo4j"
-readme = "README.md"
+description = "Nexus Graph AI"
 requires-python = ">=3.10"
 dependencies = [
-    "pydantic-ai",
-    "neo4j",
-    "python-dotenv",
-    "pydantic-settings",
-    "tenacity",
-    "dependency-injector"
-]
-
-[project.optional-dependencies]
-dev = [
-    "ruff",
-    "mypy",
-    "pytest",
-    "pytest-asyncio"
+    "pydantic-settings>=2.0.0",
 ]
 
 [tool.ruff]
 line-length = 88
 target-version = "py310"
-select = ["E", "F", "I", "W", "C90", "B"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "C90", "N", "UP", "B"]
 ignore = []
 
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
 [tool.mypy]
-python_version = "3.10"
 strict = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
 warn_return_any = true
 warn_unused_configs = true
-disallow_untyped_defs = true
-disallow_incomplete_defs = true
-check_untyped_defs = true
-disallow_untyped_decorators = true
-no_implicit_optional = true
-warn_redundant_casts = true
-warn_unused_ignores = true
-show_error_codes = true
-
-[[tool.mypy.overrides]]
-module = "neo4j.*"
-ignore_missing_imports = true

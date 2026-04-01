@@ -1,11 +1,12 @@
 import logging
 from typing import Any, Dict, Protocol
-from neo4j import AsyncGraphDatabase, AsyncDriver
+from neo4j import AsyncGraphDatabase, AsyncDriver, AsyncTransaction
 from tenacity import (
     retry,
     stop_after_attempt,
     wait_exponential,
     retry_if_exception_type,
+    AsyncRetrying,
 )
 from neo4j.exceptions import ServiceUnavailable, TransientError
 from core.schemas import GraphExtraction
@@ -109,17 +110,22 @@ class Neo4jRepository:
             for node in extraction.nodes:
                 await session.execute_write(self._merge_node, node)
             for rel in extraction.relationships:
-                await session.execute_write(self._merge_edge, rel)
+                await session.execute_write(self._execute_edge_mutation, rel)
 
         logger.info("Ingesta completada en la nube.")
 
     @staticmethod
-    async def _merge_node(tx, node):
-        query = f"MERGE (n:{node.label} {{id: $id}}) SET n += $props"
+    async def _merge_node(tx: AsyncTransaction, node: Any) -> None:
+        query = f"MERGE (n:`{node.label.value}` {{id: $id}}) SET n += $props"
         await tx.run(query, id=node.id, props=node.properties)
 
-    @staticmethod
-    async def _merge_edge(tx, rel):
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type((ServiceUnavailable, TransientError)),
+        reraise=True,
+    )
+    async def _execute_edge_mutation(self, tx: AsyncTransaction, rel: Any) -> None:
         query = (
             f"MATCH (a {{id: $source_id}}), (b {{id: $target_id}}) "
             f"WITH a, b LIMIT 1 "

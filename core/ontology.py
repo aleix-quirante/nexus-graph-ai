@@ -1,6 +1,14 @@
 from typing import Any, Dict, List, Optional, Type, Set
 from pydantic import BaseModel, Field, create_model
 from datetime import datetime
+from enum import Enum
+
+
+class AllowedNodeLabels(str, Enum):
+    Company = "Company"
+    Person = "Person"
+    Contract = "Contract"
+    Technology = "Technology"
 
 
 class EntitySchema(BaseModel):
