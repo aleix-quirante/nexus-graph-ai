@@ -69,6 +69,12 @@ Security is not an afterthought. The system implements guardrails at every bound
 - **RBAC & Isolation:** Query isolation ensuring agents can only access authorized graph sub-graphs.
 - **Secret Management:** Strict segregation of sensitive credentials from the operational logic layer.
 
+### 11. Mandatory SAST Security Enforcement (Blocking CI)
+To maintain enterprise-grade security standards, every Pull Request and Push to `main` undergoes mandatory automated security analysis. The CI pipeline is configured to **break the build** if vulnerabilities are detected:
+- **Bandit (Python Security):** Deep recursive scanning for SQL injections, insecure library usage, and configuration weaknesses. Configured to fail on `MEDIUM` and `HIGH` severity findings.
+- **Semgrep (Pattern Matching):** Multilingual scanning using strict `security-audit` and `p/python` rulesets. Any finding within these rulesets will block the merge process.
+- **Inflexible Policy:** Code cannot reach the `main` branch if there are pending security findings of `MEDIUM` or `HIGH` severity.
+
 ---
 
 ## Contratos de Datos (AgentState)

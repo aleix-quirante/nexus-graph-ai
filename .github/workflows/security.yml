@@ -1,0 +1,44 @@
+name: Security SAST Scan
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  bandit:
+    name: Bandit Python Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Bandit
+        run: pip install bandit
+
+      - name: Run Bandit Scan
+        run: |
+          # -r: recursive, -ll: medium severity and above, -iii: high confidence and above (optional, but requested deep scan)
+          # We'll use -ll to ensure MEDIUM and HIGH findings fail the build.
+          bandit -r . -ll
+
+  semgrep:
+    name: Semgrep Pattern Matching Scan
+    runs-on: ubuntu-latest
+    container:
+      image: returntocorp/semgrep
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Semgrep Scan
+        run: |
+          # Strict mode with security-audit and python rules
+          # --error: return non-zero exit code if findings are found
+          semgrep scan --config p/python --config p/security-audit --error .
