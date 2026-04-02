@@ -2,7 +2,16 @@ import logging
 import os
 from typing import Any, Optional, Dict
 
+from prometheus_client import Gauge
 from opentelemetry import trace, metrics, propagate
+
+# --- Prometheus Metrics for KEDA Scaling ---
+# Define a Gauge to track active AI tasks for horizontal scaling
+ACTIVE_AI_TASKS = Gauge(
+    "active_ai_tasks",
+    "Number of AI tasks currently being processed by this instance",
+)
+
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 from opentelemetry.sdk.resources import Resource, SERVICE_NAME, DEPLOYMENT_ENVIRONMENT

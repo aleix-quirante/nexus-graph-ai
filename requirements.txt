@@ -112,6 +112,8 @@ pyarrow==23.0.1
 pyasn1==0.6.3
 pyasn1_modules==0.4.2
 pycparser==3.0
+prometheus_client==0.21.1
+prometheus-fastapi-instrumentator==7.0.2
 pydantic==2.12.5
 pydantic-ai==1.74.0
 pydantic-ai-slim==1.74.0

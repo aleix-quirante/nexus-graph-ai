@@ -1,0 +1,19 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: nexus-graph-ai-scaler
+  namespace: default
+spec:
+  scaleTargetRef:
+    name: nexus-api
+  pollingInterval: 15
+  cooldownPeriod: 30
+  minReplicaCount: 1
+  maxReplicaCount: 20
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus-server.monitoring.svc.cluster.local:9090
+        metricName: active_ai_tasks
+        threshold: "5"
+        query: sum(active_ai_tasks)

@@ -53,7 +53,14 @@ The system implements a production-grade asynchronous deep health check at `/hea
 - **Detailed State Reporting:** Returns `200 OK` only when all critical dependencies are operational. Returns `503 Service Unavailable` with granular component status if any dependency fails or times out.
 - **Safety First:** Health probes never trigger LLM inference, avoiding unnecessary costs, rate-limiting, or latency spikes.
 
-### 8. SOC2 Readiness & Zero-Trust Secret Management
+### 9. Elastic Enterprise Scaling (KEDA & Prometheus)
+The system implements a proactive horizontal scaling architecture (HPA) to maintain a 99.99% SLA during high-demand AI processing periods:
+- **Custom AI Metrics:** A specialized Prometheus Gauge `active_ai_tasks` tracks concurrent AI reasoning operations in real-time.
+- **Event-Driven Autoscaling (KEDA):** A `ScaledObject` monitors the Prometheus metrics endpoint.
+- **Dynamic Thresholds:** Configured to trigger horizontal pod replication when reaching a threshold of **5 active tasks per pod**, ensuring low latency and preventing resource exhaustion.
+- **Fast Downscaling:** Optimized cooldown periods to release resources once AI bursts subside, maintaining cost-efficiency without sacrificing responsiveness.
+
+### 10. SOC2 Readiness & Zero-Trust Secret Management
 Security is not an afterthought. The system implements guardrails at every boundary:
 - **Zero-Trust Secret Ingestion:** Configuration is prioritized from mounted secrets (e.g., Kubernetes `Secret` or Vault) at `/var/run/secrets/nexus-graph-ai` via Pydantic's native `secrets_dir`. This prevents sensitive data leakage in environment variables or logs.
 - **Enforced Encryption Schemes:** Fatal validators block application startup if connections to core dependencies (Neo4j, Redis) do not use strictly encrypted protocols (`neo4j+s://`, `rediss://`).

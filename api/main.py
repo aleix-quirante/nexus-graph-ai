@@ -11,7 +11,8 @@ from fastapi import FastAPI, Depends, Request, Response, HTTPException
 import redis.asyncio as aioredis
 from neo4j import AsyncGraphDatabase, AsyncDriver
 
-from core.observability import setup_telemetry
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+from core.observability import setup_telemetry, ACTIVE_AI_TASKS
 from core.config import settings
 
 # Configure logging
@@ -62,6 +63,25 @@ app = FastAPI(lifespan=lifespan, title="Nexus Graph AI Enterprise")
 
 
 @app.middleware("http")
+async def track_active_ai_tasks(request: Request, call_next: Callable) -> Response:
+    """
+    KEDA scaling middleware: increments active_ai_tasks gauge at start,
+    decrements on completion (success or fail).
+    """
+    is_ai_path = request.url.path.startswith("/mcp") or request.url.path.startswith(
+        "/ask"
+    )
+
+    if is_ai_path:
+        ACTIVE_AI_TASKS.inc()
+        try:
+            return await call_next(request)
+        finally:
+            ACTIVE_AI_TASKS.dec()
+    return await call_next(request)
+
+
+@app.middleware("http")
 async def add_correlation_id(request: Request, call_next: Callable) -> Response:
     correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
     request.state.correlation_id = correlation_id
@@ -109,6 +129,14 @@ async def get_db_driver() -> AsyncGenerator[AsyncDriver, None]:
     if db.driver is None:
         raise RuntimeError("Database driver not initialized")
     yield db.driver
+
+
+@app.get("/metrics", tags=["System"])
+async def metrics() -> Response:
+    """
+    Expose metrics for Prometheus/KEDA scraping.
+    """
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/health", tags=["System"])
