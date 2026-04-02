@@ -10,6 +10,7 @@ from tenacity import (
 )
 from neo4j.exceptions import ServiceUnavailable, TransientError
 from core.schemas import GraphExtraction
+from core.exceptions import DatabaseConnectionError
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -51,7 +52,9 @@ class Neo4jRepository:
             logger.info("✅ Autenticación verificada en el Repository.")
             return True
         except Exception as e:
-            logger.error(f"❌ Fallo de autenticación en el Repository: {e}")
+            logger.error(
+                f"❌ Fallo de autenticación en el Repository: {e}", exc_info=True
+            )
             return False
 
     @retry(
@@ -73,7 +76,7 @@ class Neo4jRepository:
             await self.driver.execute_query(query)
             logger.info("🗑️ Base de datos limpiada correctamente.")
         except Exception as e:
-            logger.error(f"❌ Error limpiando la base de datos: {e}")
+            logger.error(f"❌ Error limpiando la base de datos: {e}", exc_info=True)
             raise
 
     @retry(

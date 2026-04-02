@@ -15,6 +15,12 @@ from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from core.observability import setup_telemetry, ACTIVE_AI_TASKS
 from core.config import settings
 from core.auth import verify_cryptographic_identity, TokenPayload
+from core.exceptions import (
+    NexusError,
+    DatabaseConnectionError,
+    RedisConnectionError,
+    RateLimitExceededError,
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -53,20 +59,23 @@ async def rate_limit_per_tenant(
         current = await db.redis.get(key)
         if current and int(current) >= limit:
             logger.warning(f"Rate limit exceeded for subject: {token.sub}")
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Rate limit exceeded. Please try again later.",
+            raise RateLimitExceededError(
+                message="Rate limit exceeded. Please try again later.",
+                details={"subject": token.sub, "limit": limit},
             )
 
         pipe = db.redis.pipeline()
         await pipe.incr(key)
         await pipe.expire(key, window)
         await pipe.execute()
+    except (aioredis.RedisError, ConnectionError) as e:
+        logger.error(f"Redis backend failure in rate limiter: {e}", exc_info=True)
+        # Fail-open if Redis is down to avoid total outage, but log it properly.
+    except RateLimitExceededError:
+        raise
     except Exception as e:
-        if isinstance(e, HTTPException):
-            raise e
-        logger.error(f"Rate limiter error: {e}")
-        # Fail-open if Redis is down to avoid total outage, but log it.
+        logger.error(f"Unexpected error in rate limiter: {e}", exc_info=True)
+        # In case of unforeseen logic errors, we still fail-open but log extensively.
 
 
 @asynccontextmanager
@@ -85,7 +94,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         set_mcp_db_driver(db.driver)
         logger.info("✅ [NEXUS CORE] Connections to Neo4j and Redis established.")
     except Exception as e:
-        logger.error(f"❌ [NEXUS CORE] Initialization failed: {e}")
+        logger.critical(f"❌ [NEXUS CORE] Initialization failed: {e}", exc_info=True)
 
     yield
 
@@ -103,6 +112,31 @@ app = FastAPI(
         Depends(rate_limit_per_tenant),
     ],
 )
+
+
+@app.exception_handler(NexusError)
+async def nexus_exception_handler(request: Request, exc: NexusError):
+    """
+    Centralized exception handler for NexusError.
+    Ensures that domain errors are returned with consistent structure and status codes.
+    """
+    logger.error(
+        f"Domain Error: {exc.message} | Details: {exc.details} | "
+        f"Correlation ID: {getattr(request.state, 'correlation_id', 'unknown')}",
+        exc_info=True,
+    )
+
+    status_code = 500
+    if isinstance(exc, RateLimitExceededError):
+        status_code = 429
+    elif isinstance(exc, (DatabaseConnectionError, RedisConnectionError)):
+        status_code = 503
+
+    return Response(
+        content=f'{{"error": "{exc.message}", "type": "{type(exc).__name__}"}}',
+        status_code=status_code,
+        media_type="application/json",
+    )
 
 
 @app.middleware("http")
@@ -242,5 +276,5 @@ async def health_check() -> dict[str, Any]:
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unexpected health check failure: {e}")
+        logger.error(f"Unexpected health check failure: {e}", exc_info=True)
         raise HTTPException(status_code=503, detail="Service Unavailable")

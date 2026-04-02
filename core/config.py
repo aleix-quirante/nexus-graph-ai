@@ -1,26 +1,110 @@
+import os
+from abc import ABC, abstractmethod
+from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import SecretStr, field_validator
-from typing import Optional
+
+
+# --- Secret Management Abstraction (SOLID: Interface Segregation & Dependency Inversion) ---
+
+
+class SecretProvider(ABC):
+    """Abstract interface for secret retrieval (Strategy Pattern)."""
+
+    @abstractmethod
+    def get_secret(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        """Fetch a secret by key."""
+        pass
+
+
+class EnvSecretProvider(SecretProvider):
+    """Initial implementation using environment variables (SOC2 Phase 1)."""
+
+    def get_secret(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        return os.getenv(key, default)
+
+
+class VaultSecretProvider(SecretProvider):
+    """Placeholder for HashiCorp Vault (SOC2 Phase 2)."""
+
+    def get_secret(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        # Implementation for Vault would go here
+        raise NotImplementedError("Vault provider not yet implemented.")
+
+
+class AWSSecretManagerProvider(SecretProvider):
+    """Placeholder for AWS Secrets Manager (SOC2 Phase 2)."""
+
+    def get_secret(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        # Implementation for AWS would go here
+        raise NotImplementedError("AWS provider not yet implemented.")
+
+
+class SecretFacade:
+    """
+    Facade to isolate secret access from the rest of the application.
+    Enables single-line configuration changes to switch providers.
+    """
+
+    def __init__(self, provider: SecretProvider):
+        self._provider = provider
+
+    def get(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        return self._provider.get_secret(key, default)
+
+    def get_secret_str(
+        self, key: str, default: Optional[str] = None
+    ) -> Optional[SecretStr]:
+        val = self.get(key, default)
+        return SecretStr(val) if val is not None else None
+
+
+# --- Configuration Initialization ---
+
+
+def get_secret_provider() -> SecretProvider:
+    """
+    Factory to select the secret provider based on environment configuration.
+    Follows SOC2 requirements for flexible runtime secret management.
+    """
+    provider_type = os.getenv("SECRET_PROVIDER", "env").lower()
+    if provider_type == "vault":
+        return VaultSecretProvider()
+    if provider_type == "aws":
+        return AWSSecretManagerProvider()
+    return EnvSecretProvider()
+
+
+# SINGLE LINE TO CHANGE PROVIDER:
+# Change 'current_secret_provider = ...' to manually instantiate or use the factory.
+current_secret_provider = get_secret_provider()
+secrets = SecretFacade(current_secret_provider)
 
 
 class Settings(BaseSettings):
+    """
+    Application settings refactored to use the SecretFacade.
+    Follows SOLID principles by decoupling configuration from secret storage.
+    """
+
     # Security configuration
-    JWT_PUBLIC_KEY: str = (
-        "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1v...\n-----END PUBLIC KEY-----"
+    JWT_PUBLIC_KEY: str = secrets.get(
+        "JWT_PUBLIC_KEY",
+        "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1v...\n-----END PUBLIC KEY-----",
     )
 
     # Neo4j configuration
-    NEO4J_URI: str = "neo4j+s://localhost:7687"
-    NEO4J_USER: str = "neo4j"
-    NEO4J_PASSWORD: SecretStr = SecretStr("password")
+    NEO4J_URI: str = secrets.get("NEO4J_URI", "neo4j+s://localhost:7687")
+    NEO4J_USER: str = secrets.get("NEO4J_USER", "neo4j")
+    NEO4J_PASSWORD: SecretStr = secrets.get_secret_str("NEO4J_PASSWORD", "password")
 
     # Redis configuration
-    REDIS_URL: str = "rediss://localhost:6379/0"
+    REDIS_URL: str = secrets.get("REDIS_URL", "rediss://localhost:6379/0")
 
     # LLM API Keys - Using SecretStr to prevent accidental logging
-    OPENAI_API_KEY: Optional[SecretStr] = None
-    ANTHROPIC_API_KEY: Optional[SecretStr] = None
-    GEMINI_API_KEY: Optional[SecretStr] = None
+    OPENAI_API_KEY: Optional[SecretStr] = secrets.get_secret_str("OPENAI_API_KEY")
+    ANTHROPIC_API_KEY: Optional[SecretStr] = secrets.get_secret_str("ANTHROPIC_API_KEY")
+    GEMINI_API_KEY: Optional[SecretStr] = secrets.get_secret_str("GEMINI_API_KEY")
 
     # MCP configuration
     MCP_HOST: str = "0.0.0.0"
@@ -45,11 +129,15 @@ class Settings(BaseSettings):
         return v
 
     model_config = SettingsConfigDict(
+        # We still support .env for non-secret configuration if needed,
+        # but secrets are now abstracted via the provider.
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
-        secrets_dir="/var/run/secrets/nexus-graph-ai",
+        # For SOC2 compliance, we'd ideally avoid local secrets_dir in production
+        # and rely exclusively on the SecretProvider.
     )
 
 
+# Instantiate settings
 settings = Settings()

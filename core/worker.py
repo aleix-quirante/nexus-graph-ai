@@ -17,6 +17,7 @@ from confluent_kafka import Consumer, KafkaError
 from core.database import Neo4jRepository
 from core.config import settings
 from core.concurrency import OntologyLockManager
+from core.exceptions import DatabaseTransactionError, NexusError, AIError
 
 logger = logging.getLogger(__name__)
 
@@ -51,8 +52,8 @@ async def insert_to_neo4j(graph_data: GraphExtraction) -> None:
                 f"Successfully persisted {len(graph_data.nodes)} nodes and {len(graph_data.relationships)} rels with token {fencing_token}."
             )
         except Exception as e:
-            logger.error(f"Failed to insert graph data: {e}")
-            raise
+            logger.error(f"Failed to insert graph data: {e}", exc_info=True)
+            raise DatabaseTransactionError(f"Worker failed to persist graph: {e}")
 
 
 async def process_message_with_recovery(
@@ -80,8 +81,8 @@ async def process_message_with_recovery(
                 f"Please correct the errors and try again. Original content:\n{content}"
             )
         except Exception as e:
-            logger.error(f"Unexpected error: {e}")
-            raise e
+            logger.error(f"Unexpected error in AI processing: {e}", exc_info=True)
+            raise AIError(f"AI agent failed: {e}")
 
     return None
 
@@ -125,7 +126,7 @@ async def consume_document_chunks() -> None:
                 # Commit offset after successful processing
                 consumer.commit(asynchronous=False)
             except Exception as e:
-                logger.error(f"Failed to process message: {e}")
+                logger.error(f"Failed to process message: {e}", exc_info=True)
                 # For enterprise grade, we could send to a Dead Letter Queue (DLQ) here
     finally:
         consumer.close()

@@ -1,74 +1,45 @@
-import jwt
-import logging
-from typing import Optional, Literal
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel, Field, ValidationError
-from core.config import settings
-
-# Configure logging
-logger = logging.getLogger(__name__)
-
-# Security Scheme
-security = HTTPBearer()
-
-# Recognized roles in the taxonomy
-RoleType = Literal["admin", "agent"]
+from fastapi import Request, HTTPException, status
+from pydantic import BaseModel, ConfigDict
+from cryptography import x509
+from cryptography.hazmat.backends import default_backend
 
 
-class TokenPayload(BaseModel):
-    """
-    Cryptographic identity claim schema.
-    """
-
-    sub: str = Field(..., description="Subject (unique user/service identifier)")
-    role: RoleType = Field(..., description="Assigned RBAC role (admin, agent)")
-    exp: int = Field(..., description="Token expiration timestamp (Unix Epoch)")
+class CertIdentity(BaseModel):
+    model_config = ConfigDict(strict=True, frozen=True)
+    common_name: str
+    organization: str
+    roles: frozenset[str]
 
 
-async def verify_cryptographic_identity(
-    auth: HTTPAuthorizationCredentials = Depends(security),
-) -> TokenPayload:
-    """
-    Strict cryptographic identity validation middleware.
-    Decodes and verifies RS256 JWT signatures against the configured public key.
-    Enforces 'Deny by Default' policy.
-    """
-    token = auth.credentials
-
-    try:
-        # Decode and verify JWT
-        payload = jwt.decode(
-            token,
-            settings.JWT_PUBLIC_KEY,
-            algorithms=["RS256"],
-            options={"verify_exp": True},
-        )
-
-        # Validate schema via Pydantic
-        token_data = TokenPayload(**payload)
-
-        logger.info(f"Verified identity: {token_data.sub} with role: {token_data.role}")
-        return token_data
-
-    except jwt.ExpiredSignatureError:
-        logger.warning("JWT validation failed: Token expired.")
+async def require_mtls_identity(request: Request) -> CertIdentity:
+    """Valida la identidad criptográfica del cliente extraída del Envoy/Istio sidecar."""
+    cert_pem = request.headers.get("X-Forwarded-Client-Cert")
+    if not cert_pem:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has expired.",
-            headers={"WWW-Authenticate": "Bearer"},
+            detail="Client certificate missing. Enforcement by Service Mesh bypassed.",
         )
-    except (jwt.InvalidTokenError, ValidationError) as e:
-        logger.warning(
-            f"Zero-Trust violation: Invalid token or unrecognized claims. Error: {str(e)}"
+
+    try:
+        cert = x509.load_pem_x509_certificate(
+            cert_pem.encode("utf-8"), default_backend()
         )
+        subject = cert.subject
+        cn = subject.get_attributes_for_oid(x509.oid.NameOID.COMMON_NAME)[0].value
+        org = subject.get_attributes_for_oid(x509.oid.NameOID.ORGANIZATION_NAME)[
+            0
+        ].value
+
+        ous = [
+            attr.value
+            for attr in subject.get_attributes_for_oid(
+                x509.oid.NameOID.ORGANIZATIONAL_UNIT_NAME
+            )
+        ]
+
+        return CertIdentity(common_name=cn, organization=org, roles=frozenset(ous))
+    except Exception:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Invalid or unauthorized identity token. Zero-Trust policy violation.",
-        )
-    except Exception as e:
-        logger.error(f"Unexpected authentication failure: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access Denied: Default Policy.",
+            detail="Cryptographic identity verification failed.",
         )

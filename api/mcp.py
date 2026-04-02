@@ -17,6 +17,13 @@ from core.concurrency import OntologyLockManager
 from core.config import settings
 from core.auth import verify_cryptographic_identity, TokenPayload
 from core.cypher_templates import get_safe_query, ALLOWED_CYPHER_TEMPLATES
+from core.exceptions import (
+    ResourceNotFoundError,
+    DatabaseTransactionError,
+    AuthorizationError,
+    ConflictError,
+    NexusError,
+)
 
 from neo4j import AsyncDriver
 from neo4j.exceptions import TransientError, ClientError
@@ -87,7 +94,7 @@ class MCPGraphService:
             result = await session.run(query, node_id=node_id)
             record = await result.single()
             if not record:
-                raise ValueError(f"Node {node_id} not found")
+                raise ResourceNotFoundError(f"Node {node_id} not found")
 
             props = dict(record["properties"])
             label = record["labels"][0] if record["labels"] else "UNKNOWN"
@@ -141,12 +148,14 @@ class MCPGraphService:
                         logger.warning(
                             f"Write rejected: Stale token {token} for edge {source_id}->{target_id}"
                         )
-                        raise ValueError(
+                        raise ConflictError(
                             f"Transaction rejected: A newer update (higher fencing token) has already been processed for this edge."
                         )
         except (ClientError, TransientError) as e:
-            logger.error(f"Error during edge creation: {e}")
-            raise ValueError(f"Failed to create edge due to database error: {e}")
+            logger.error(f"Error during edge creation: {e}", exc_info=True)
+            raise DatabaseTransactionError(
+                f"Failed to create edge due to database error: {e}"
+            )
 
         return GraphEdgeOutput(
             source_id=source_id,
@@ -235,9 +244,12 @@ async def execute_mcp_action(
                 logger.error(
                     f"RBAC Violation: Subject {token.sub if token else 'UNKNOWN'} attempted write_graph_edge without admin role."
                 )
-                raise HTTPException(
-                    status_code=403,
-                    detail="Forbidden: Admin role derived mathematically from token is required for destructive graph mutations.",
+                raise AuthorizationError(
+                    message="Forbidden: Admin role derived mathematically from token is required for destructive graph mutations.",
+                    details={
+                        "subject": token.sub if token else "UNKNOWN",
+                        "action": name,
+                    },
                 )
 
         if name == "read_graph_node":
@@ -260,11 +272,14 @@ async def execute_mcp_action(
         else:
             raise ValueError(f"Unknown tool: {name}")
 
-    except HTTPException:
-        raise
+    except NexusError as e:
+        return [TextContent(type="text", text=f"Domain Error: {e.message}")]
     except Exception as e:
+        logger.error(f"Unexpected error processing tool {name}: {e}", exc_info=True)
         return [
-            TextContent(type="text", text=f"Error processing tool {name}: {str(e)}")
+            TextContent(
+                type="text", text=f"Internal Error processing tool {name}: {str(e)}"
+            )
         ]
 
 
