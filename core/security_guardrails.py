@@ -101,12 +101,9 @@ class SLMGuard:
                     return False
                 return True
         except Exception as e:
-            # On timeout or error, we default to safe or block based on policy.
-            # For enterprise security, we should probably fail-closed, but here we log and continue
-            # if the model is unreachable to avoid complete service outage,
-            # UNLESS it's a critical security requirement.
+            # On timeout or error, we must fail-closed for enterprise security.
             logger.error(f"SLM Guard error: {e}")
-            return True  # Fail-open for demo, in production should be False.
+            return False  # Fail-closed for production.
 
 
 class SecurityPipeline:

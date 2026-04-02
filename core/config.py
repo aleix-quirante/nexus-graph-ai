@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import field_validator
+from pydantic import SecretStr, field_validator
 from typing import Optional
 
 
@@ -7,14 +7,15 @@ class Settings(BaseSettings):
     # Neo4j configuration
     NEO4J_URI: str = "neo4j+s://localhost:7687"
     NEO4J_USER: str = "neo4j"
-    NEO4J_PASSWORD: str = "password"
+    NEO4J_PASSWORD: SecretStr = SecretStr("password")
 
     # Redis configuration
     REDIS_URL: str = "rediss://localhost:6379/0"
 
-    # LLM API Keys
-    OPENAI_API_KEY: str = ""
-    ANTHROPIC_API_KEY: Optional[str] = None
+    # LLM API Keys - Using SecretStr to prevent accidental logging
+    OPENAI_API_KEY: Optional[SecretStr] = None
+    ANTHROPIC_API_KEY: Optional[SecretStr] = None
+    GEMINI_API_KEY: Optional[SecretStr] = None
 
     # MCP configuration
     MCP_HOST: str = "0.0.0.0"

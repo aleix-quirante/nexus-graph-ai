@@ -71,23 +71,25 @@ class LLMREBreaker(CircuitBreaker):
             logger.error(f"Failed to record metric: {e}")
 
 
-# Create redis client
-redis_client = Redis.from_url("redis://localhost:6379", decode_responses=True)
+# Create redis client using centralized settings
+from core.config import settings
+
+redis_client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
 
 
 async def check_idempotency_key(data_props: dict, window_seconds: int = 3600) -> bool:
-    # Genera una huella dactilar única utilizando una función hash sobre las propiedades de los datos y un timestamp de ventana temporal
-    window_timestamp = int(time.time() / window_seconds)
+    # Use a precise hash of the data and tenant_id (if available) without time windows
+    # to ensure true idempotency unless data actually changes.
     props_str = json.dumps(data_props, sort_keys=True)
-    hash_input = f"{props_str}_{window_timestamp}".encode("utf-8")
-    fingerprint = hashlib.sha256(hash_input).hexdigest()
+    fingerprint = hashlib.sha256(props_str.encode("utf-8")).hexdigest()
 
     key = f"neo4j_idempotency:{fingerprint}"
     is_processed = await redis_client.get(key)
     if is_processed:
         return True
 
-    await redis_client.setex(key, window_seconds, "1")
+    # Set with expiration to eventually clear old keys, but window is large
+    await redis_client.setex(key, 86400, "1")  # 24h cache
     return False
 
 
@@ -307,8 +309,13 @@ async def reasoning_agent(state: AgentState) -> Dict[str, List[ContextEntry] | s
 
 
 def route_reasoning(state: AgentState) -> str:
-    # Recursion is natively handled by LangGraph via recursion_limit.
-    return "terminal_node"
+    # Enterprise-grade conditional routing:
+    # Decide if we need more reasoning or if we reached a satisfactory answer.
+    # Prevent infinite loops with a max iteration check (handled by LangGraph recursion_limit)
+    # but here we can add logic to check response quality.
+    if state.get("response") and len(state.get("response", "")) > 10:
+        return "terminal_node"
+    return "reasoning_agent"
 
 
 async def terminal_node(state: AgentState) -> Dict[str, str]:

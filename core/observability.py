@@ -72,6 +72,13 @@ class SecurityAttributeProcessor(SpanProcessor):
             "prompt_length",
             "ai.input",
         }
+        try:
+            from core.security_guardrails import PIISanitizer
+
+            self.pii_sanitizer = PIISanitizer()
+        except Exception as e:
+            logger.warning(f"PIISanitizer not available for observability: {e}")
+            self.pii_sanitizer = None
 
     def on_start(self, span: Span, parent_context: Optional[Any] = None) -> None:
         pass
@@ -93,10 +100,18 @@ class SecurityAttributeProcessor(SpanProcessor):
                 filtered_attributes[key] = "[REDACTED_SENSITIVE]"
                 continue
 
-            # 2. Block raw payloads if not security validated
-            if key_lower in self.raw_payload_keys and not security_validated:
-                filtered_attributes[key] = "[REDACTED_UNVALIDATED_PAYLOAD]"
-                continue
+            # 2. Scrub PII from payloads and block if not security validated
+            if key_lower in self.raw_payload_keys:
+                if isinstance(value, str) and self.pii_sanitizer:
+                    value = self.pii_sanitizer.sanitize(value)
+
+                if not security_validated:
+                    filtered_attributes[key] = (
+                        f"[PII_SCRUBBED][REDACTED_UNVALIDATED]: {value[:50]}..."
+                        if isinstance(value, str)
+                        else "[REDACTED_UNVALIDATED_PAYLOAD]"
+                    )
+                    continue
 
             filtered_attributes[key] = value
 

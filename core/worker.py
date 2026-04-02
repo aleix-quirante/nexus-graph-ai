@@ -16,6 +16,7 @@ from core.schemas import GraphExtraction
 from confluent_kafka import Consumer, KafkaError
 from core.database import Neo4jRepository
 from core.config import settings
+from core.concurrency import OntologyLockManager
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,9 @@ neo4j_repo = Neo4jRepository(
     user=settings.NEO4J_USER,
     password=settings.NEO4J_PASSWORD,
 )
+
+# Initialize Lock Manager for global fencing tokens
+lock_manager = OntologyLockManager(redis_url=settings.REDIS_URL)
 
 # Initialize the Pydantic AI agent with the desired model
 agent = Agent(
@@ -39,18 +43,16 @@ async def insert_to_neo4j(graph_data: GraphExtraction) -> None:
     Asynchronously persists graph data to Neo4j using the Enterprise repository.
     Handles fencing tokens to ensure transaction integrity.
     """
-    import time
-
-    # Use a high-resolution timestamp as a fencing token for idempotency
-    fencing_token = int(time.time() * 1000)
-    try:
-        await neo4j_repo.add_graph_data(graph_data, fencing_token)
-        logger.info(
-            f"Successfully persisted {len(graph_data.nodes)} nodes and {len(graph_data.relationships)} rels."
-        )
-    except Exception as e:
-        logger.error(f"Failed to insert graph data: {e}")
-        raise
+    # Use global lock manager to get a monotonic fencing token across the cluster
+    async with lock_manager.acquire_node_lock("global_ingest") as fencing_token:
+        try:
+            await neo4j_repo.add_graph_data(graph_data, fencing_token)
+            logger.info(
+                f"Successfully persisted {len(graph_data.nodes)} nodes and {len(graph_data.relationships)} rels with token {fencing_token}."
+            )
+        except Exception as e:
+            logger.error(f"Failed to insert graph data: {e}")
+            raise
 
 
 async def process_message_with_recovery(
