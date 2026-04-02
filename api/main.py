@@ -3,7 +3,7 @@ import os
 import time
 import uuid
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator, Callable
+from typing import AsyncGenerator, Callable, Any
 
 from dotenv import load_dotenv
 import asyncio
@@ -26,6 +26,7 @@ load_dotenv(override=True)
 
 class Database:
     driver: AsyncDriver | None = None
+    redis: aioredis.Redis | None = None
 
 
 db = Database()
@@ -36,21 +37,25 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     db.driver = AsyncGraphDatabase.driver(
         settings.NEO4J_URI, auth=(settings.NEO4J_USER, settings.NEO4J_PASSWORD)
     )
+    db.redis = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
 
     # Simple check on startup
     try:
         await db.driver.verify_connectivity()
+        await db.redis.ping()
         from api.mcp import set_mcp_db_driver
 
         set_mcp_db_driver(db.driver)
-        logger.info("✅ [NEXUS CORE] Conexión a Neo4j establecida con éxito.")
+        logger.info("✅ [NEXUS CORE] Connections to Neo4j and Redis established.")
     except Exception as e:
-        logger.error(f"❌ [NEXUS CORE] Failed to connect to Neo4j on startup: {e}")
+        logger.error(f"❌ [NEXUS CORE] Initialization failed: {e}")
 
     yield
 
     if db.driver:
         await db.driver.close()
+    if db.redis:
+        await db.redis.close()
 
 
 app = FastAPI(lifespan=lifespan, title="Nexus Graph AI Enterprise")
@@ -107,26 +112,64 @@ async def get_db_driver() -> AsyncGenerator[AsyncDriver, None]:
 
 
 @app.get("/health", tags=["System"])
-async def health_check() -> dict[str, str]:
+async def health_check() -> dict[str, Any]:
+    """
+    Asynchronous deep health check verifying connectivity to Redis and Neo4j.
+    Enforces a strict 2.0s timeout to prevent resource exhaustion.
+    """
+
+    async def check_redis() -> str:
+        if db.redis is None:
+            raise RuntimeError("Redis client not initialized")
+        await db.redis.ping()
+        return "ok"
+
+    async def check_neo4j() -> str:
+        if db.driver is None:
+            raise RuntimeError("Neo4j driver not initialized")
+        async with db.driver.session() as session:
+            result = await session.run("RETURN 1")
+            await result.single()
+        return "ok"
+
     try:
-        redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
-
-        async def check_redis():
-            await redis_client.setex("health_check", 5, "ok")
-
-        async def check_neo4j():
-            if db.driver is None:
-                raise Exception("Neo4j driver not initialized")
-            async with db.driver.session() as session:
-                result = await session.run("RETURN 1")
-                await result.single()
-
-        await asyncio.wait_for(
-            asyncio.gather(check_redis(), check_neo4j()), timeout=1.0
+        # Verify connectivity asynchronously with strict 2.0s timeout
+        results = await asyncio.wait_for(
+            asyncio.gather(check_redis(), check_neo4j(), return_exceptions=True),
+            timeout=2.0,
         )
-        return {"status": "ok", "system": "Nexus Graph AI Core"}
+
+        redis_status = "ok" if results[0] == "ok" else "error"
+        neo4j_status = "ok" if results[1] == "ok" else "error"
+
+        if redis_status != "ok" or neo4j_status != "ok":
+            if isinstance(results[0], Exception):
+                logger.error(f"Redis Health Failure: {results[0]}")
+            if isinstance(results[1], Exception):
+                logger.error(f"Neo4j Health Failure: {results[1]}")
+
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "status": "unhealthy",
+                    "components": {"redis": redis_status, "neo4j": neo4j_status},
+                },
+            )
+
+        return {"status": "healthy", "components": {"redis": "ok", "neo4j": "ok"}}
+
+    except asyncio.TimeoutError:
+        logger.error("Health check timed out after 2.0 seconds")
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "status": "unhealthy",
+                "reason": "Health check timeout",
+                "components": {"redis": "timeout", "neo4j": "timeout"},
+            },
+        )
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Health check failed: {e}")
+        logger.error(f"Unexpected health check failure: {e}")
         raise HTTPException(status_code=503, detail="Service Unavailable")
-    finally:
-        await redis_client.aclose()

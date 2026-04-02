@@ -45,7 +45,14 @@ Every function call, state transition, and cypher query is instrumented:
 - **Latency & Error Tracking:** Granular traces identifying bottlenecks in LLM inference vs Graph I/O.
 - **Audit Trails:** Immutable logs for all data mutations to comply with stringent enterprise auditing requirements.
 
-### 7. SOC2 Readiness by Design
+### 7. Deep Health Probes & Resilience
+The system implements a production-grade asynchronous deep health check at `/health` to ensure high availability (99.99% SLA):
+- **Real-time Connectivity Checks:** Verifies both Redis (via `ping()`) and Neo4j (via lightweight `RETURN 1` query) in parallel.
+- **Strict Resource Isolation:** Enforces a 2.0-second timeout on all probe operations using `asyncio.wait_for`, preventing probe-induced resource exhaustion or silent backpressure during partial outages.
+- **Detailed State Reporting:** Returns `200 OK` only when all critical dependencies are operational. Returns `503 Service Unavailable` with granular component status if any dependency fails or times out.
+- **Safety First:** Health probes never trigger LLM inference, avoiding unnecessary costs, rate-limiting, or latency spikes.
+
+### 8. SOC2 Readiness by Design
 Security is not an afterthought. The system implements guardrails at every boundary:
 - **Semantic Content Inspection (LLM as a Judge):** We utilize a dedicated Small Language Model (SLM) to perform semantic evaluation of all content, detecting toxicity, PII, PHI, and malicious intent. This neutralizes evasion tactics like Leetspeak or Base64 encoding.
 - **Strict Input Validation:** Pydantic-enforced schemas on all ingress endpoints, integrating robust network exception handling for the SLM judge to guarantee system stability and fail-safe operations.
