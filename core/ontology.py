@@ -103,48 +103,23 @@ class OntologyRegistry:
 import os
 import asyncio
 from contextlib import asynccontextmanager
+from core.concurrency import OntologyLockManager as DistributedLockManager
+from core.config import settings
 
 
 class OntologyLockManager:
     def __init__(self):
-        self.redis_url = os.getenv("REDIS_URL")
-        self.redis = None
-        self._local_locks: Dict[str, asyncio.Lock] = {}
-        self._global_lock = asyncio.Lock()
+        self.manager = DistributedLockManager(settings.REDIS_URL)
 
     async def connect(self):
-        if self.redis_url:
-            try:
-                import redis.asyncio as aioredis
-
-                self.redis = aioredis.from_url(self.redis_url)
-                await self.redis.ping()
-                print("✅ Conectado a Redis para Distributed Locks de Ontología")
-            except Exception as e:
-                print(f"⚠️ Fallo al conectar a Redis: {e}. Usando fallback asyncio.Lock")
-                self.redis = None
+        # Compatibility method
+        pass
 
     @asynccontextmanager
     async def acquire(self, lock_key: str):
-        if self.redis:
-            # Requires redis library installed. We assume it is or will fallback if import fails.
-            lock = self.redis.lock(f"ontology_lock:{lock_key}", timeout=10.0)
-            await lock.acquire()
-            try:
-                yield
-            finally:
-                try:
-                    await lock.release()
-                except Exception:
-                    pass
-        else:
-            async with self._global_lock:
-                if lock_key not in self._local_locks:
-                    self._local_locks[lock_key] = asyncio.Lock()
-                local_lock = self._local_locks[lock_key]
-
-            async with local_lock:
-                yield
+        # Map old 'acquire' to new 'acquire_node_lock'
+        async with self.manager.acquire_node_lock(lock_key) as token:
+            yield token
 
 
 # Global lock manager instance

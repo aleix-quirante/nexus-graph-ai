@@ -12,6 +12,8 @@ from mcp.server.models import InitializationOptions
 from pydantic import BaseModel, Field
 
 from core.ontology import AllowedNodeLabels
+from core.concurrency import OntologyLockManager
+from core.config import settings
 
 from neo4j import AsyncDriver
 from neo4j.exceptions import TransientError, ClientError
@@ -66,6 +68,8 @@ class QueryOutput(BaseModel):
 
 # --- Abstraction Layer ---
 
+lock_manager = OntologyLockManager(settings.REDIS_URL)
+
 
 class MCPGraphService:
     def __init__(self, driver: AsyncDriver):
@@ -94,7 +98,7 @@ class MCPGraphService:
         properties: Dict[str, PropertyType],
     ) -> GraphEdgeOutput:
 
-        async def _execute_edge_mutation(tx):
+        async def _execute_edge_mutation(tx, fencing_token: int):
             # Check if nodes exist (dummy creation of nodes to emulate dynamic ontology expansion if they don't exist)
             query_nodes = """
             MERGE (a:DYNAMIC_NODE {id: $source_id})
@@ -102,36 +106,41 @@ class MCPGraphService:
             """
             await tx.run(query_nodes, source_id=source_id, target_id=target_id)
 
-            # Optimistic Concurrency Control using MERGE and internal locking mechanisms of Neo4j.
-            # Removed the external async lock_manager in favor of database-level concurrency handling.
+            # Optimistic Concurrency Control using MERGE and Enterprise Fencing Tokens.
+            # Only perform the write if the current node/edge doesn't have a newer token.
             query = (
                 f"MATCH (a {{id: $source_id}}), (b {{id: $target_id}}) "
                 f"MERGE (a)-[r:`{edge_type}`]->(b) "
-                f"SET r += $properties "
-                f"RETURN r"
+                "WITH r "
+                "WHERE coalesce(r.last_fencing_token, 0) < $fencing_token "
+                "SET r += $properties, r.last_fencing_token = $fencing_token "
+                "RETURN r"
             )
             result = await tx.run(
-                query, source_id=source_id, target_id=target_id, properties=properties
+                query,
+                source_id=source_id,
+                target_id=target_id,
+                properties=properties,
+                fencing_token=fencing_token,
             )
             return await result.single()
 
-        # Replaced global async lock with Neo4j's built-in transaction retries and optimistic concurrency
-        # which is partition tolerant and safe. execute_write automatically handles retries for TransientErrors.
-        async with self.driver.session() as session:
-            try:
-                record = await session.execute_write(_execute_edge_mutation)
-                if not record:
-                    raise ValueError(
-                        "Could not create edge. Check if source and target nodes exist."
-                    )
-            except ClientError as e:
-                logger.error(f"ClientError during edge creation: {e}")
-                raise ValueError(f"Failed to create edge due to client error: {e}")
-            except TransientError as e:
-                logger.error(f"TransientError during edge creation: {e}")
-                raise ValueError(
-                    f"Failed to create edge due to transient error (concurrency/network): {e}"
-                )
+        # Replaced global async lock with Redlock + Fencing Tokens manager.
+        # This provides distributed serialization and protects against stale writes.
+        try:
+            async with lock_manager.acquire_edge_locks(source_id, target_id) as token:
+                async with self.driver.session() as session:
+                    record = await session.execute_write(_execute_edge_mutation, token)
+                    if not record:
+                        logger.warning(
+                            f"Write rejected: Stale token {token} for edge {source_id}->{target_id}"
+                        )
+                        raise ValueError(
+                            f"Transaction rejected: A newer update (higher fencing token) has already been processed for this edge."
+                        )
+        except (ClientError, TransientError) as e:
+            logger.error(f"Error during edge creation: {e}")
+            raise ValueError(f"Failed to create edge due to database error: {e}")
 
         return GraphEdgeOutput(
             source_id=source_id,
