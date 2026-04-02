@@ -16,6 +16,7 @@ from core.ontology import AllowedNodeLabels
 from core.concurrency import OntologyLockManager
 from core.config import settings
 from core.auth import verify_cryptographic_identity, TokenPayload
+from core.cypher_templates import get_safe_query, ALLOWED_CYPHER_TEMPLATES
 
 from neo4j import AsyncDriver
 from neo4j.exceptions import TransientError, ClientError
@@ -48,10 +49,8 @@ class WriteGraphEdgeInput(BaseModel):
 
 
 class QuerySubgraphInput(BaseModel):
-    cypher_query: str = Field(
-        ..., description="Consulta cypher parametrizada a ejecutar"
-    )
-    parameters: Dict[str, PropertyType] = Field(
+    intent_name: str = Field(..., description="Nombre de la consulta pre-aprobada")
+    parameters: Dict[str, Any] = Field(
         default_factory=dict, description="Parametros de la consulta"
     )
 
@@ -157,16 +156,19 @@ class MCPGraphService:
         )
 
     async def query_subgraph(
-        self, cypher: str, parameters: Dict[str, PropertyType] | None = None
+        self, intent_name: str, parameters: Dict[str, Any] | None = None
     ) -> QueryOutput:
         if parameters is None:
             parameters = {}
+
+        # Retrieve the static, safe query template
+        safe_cypher = get_safe_query(intent_name)
 
         # 2. Execute with forced parameterized query approach
         async with self.driver.session() as session:
             # Using read_transaction to strictly enforce read-only at database level as well
             async def _execute_read(tx):
-                result = await tx.run(cypher, parameters)
+                result = await tx.run(safe_cypher, parameters)
                 return await result.values()
 
             records = await session.execute_read(_execute_read)
@@ -197,7 +199,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="query_subgraph",
-            description="Ejecuta una consulta Cypher parametrizada de solo lectura",
+            description="Ejecuta una consulta pre-aprobada del registro de templates",
             inputSchema=QuerySubgraphInput.model_json_schema(),
         ),
     ]
@@ -252,7 +254,7 @@ async def execute_mcp_action(
 
         elif name == "query_subgraph":
             data = QuerySubgraphInput.model_validate(arguments)
-            out = await service.query_subgraph(data.cypher_query, data.parameters)
+            out = await service.query_subgraph(data.intent_name, data.parameters)
             return [TextContent(type="text", text=out.model_dump_json())]
 
         else:
