@@ -323,13 +323,44 @@ async def reasoning_agent(state: AgentState) -> Dict[str, List[ContextEntry] | s
     return {"response": respuesta_real, "history": history}
 
 
-def route_reasoning(state: AgentState) -> str:
-    # Enterprise-grade conditional routing:
-    # Decide if we need more reasoning or if we reached a satisfactory answer.
-    # Prevent infinite loops with a max iteration check (handled by LangGraph recursion_limit)
-    # but here we can add logic to check response quality.
-    if state.get("response") and len(state.get("response", "")) > 10:
+async def route_reasoning(state: AgentState) -> str:
+    """
+    Evaluador determinista y por IA del estado de terminación.
+    Sustituye la heurística amateur de longitud por un juicio semántico.
+    """
+    response = state.get("response", "")
+    query = state.get("query", "")
+
+    if not response:
+        return "reasoning_agent"
+
+    # 1. Condición Determinista (Fast-path): Búsqueda de marcadores de finalización
+    markers = ["FINAL_ANSWER", "CONCLUSIÓN", "[[FIN]]", "SOLUCIÓN:"]
+    if any(m in response.upper() for m in markers):
+        logger.info("Terminación detectada por marcador determinista.")
         return "terminal_node"
+
+    # 2. LLM Judge Ligero: Evaluación semántica de suficiencia
+    judge_messages = [
+        {
+            "role": "system",
+            "content": "Eres un Juez de Terminación. Responde 'TERMINAR' si la respuesta del asistente resuelve la duda del usuario por completo. Responde 'CONTINUAR' si se necesita más investigación o razonamiento. Responde solo con una palabra.",
+        },
+        {"role": "user", "content": f"Usuario: {query}\nAsistente: {response}"},
+    ]
+
+    try:
+        # Reutilizamos el router con circuit breaker para el juicio
+        veredicto = await router.route_query(judge_messages, temperature=0.0)
+        if "TERMINAR" in veredicto.upper():
+            logger.info("Terminación decidida por LLM Judge.")
+            return "terminal_node"
+    except Exception as e:
+        logger.error(f"Error en LLM Judge: {e}. Aplicando fallback de seguridad.")
+        # Fallback conservador: si el juez falla, solo terminamos si la respuesta es sustancial
+        if len(response) > 100:
+            return "terminal_node"
+
     return "reasoning_agent"
 
 
