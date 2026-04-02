@@ -16,6 +16,7 @@ from core.observability import (
     CIRCUIT_STATE_GAUGE,
     CIRCUIT_FAILOVER_COUNT,
 )
+from core.pii_sanitizer import pii_sanitizer_instance
 
 logger = logging.getLogger(__name__)
 
@@ -208,7 +209,12 @@ class CircuitBreakerRouter:
                 f"Failover triggered to Gemini Pro. Reason: {type(e).__name__} ({str(e)}). "
                 f"Breaker state: {self.breaker.state}"
             )
-            return await self.fallback.generate(messages, temperature)
+            # ALERTA ZERO-TRUST: Sanitización obligatoria antes de salir a la nube
+            safe_messages = [
+                {**m, "content": pii_sanitizer_instance.sanitize_prompt(m["content"])}
+                for m in messages
+            ]
+            return await self.fallback.generate(safe_messages, temperature)
 
 
 class SpecializedGeminiEnforcer(SecurityEnforcer):

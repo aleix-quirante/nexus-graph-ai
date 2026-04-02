@@ -174,6 +174,6 @@ wrapt==1.17.3
 xai-sdk==1.10.0
 yarl==1.23.0
 zipp==3.23.0
-presidio-analyzer==2.2.355
-presidio-anonymizer==2.2.355
-spacy==3.7.5
+presidio-analyzer==2.2.35
+presidio-anonymizer==2.2.35
+spacy==3.7.4
