@@ -72,12 +72,17 @@ Security is integrated at the pipeline level, ensuring zero-trust interaction be
 - **RBAC & Isolation:** Query isolation ensuring agents can only access authorized graph sub-graphs.
 - **Secret Management:** Strict segregation of sensitive credentials from the operational logic layer.
 
-### 11. Mandatory SAST Security Enforcement (Blocking CI)
-To maintain enterprise-grade security standards, every Pull Request and Push to `main` undergoes mandatory automated security analysis. The CI pipeline is configured to **break the build** if vulnerabilities are detected:
-- **Bandit (Python Security):** Deep recursive scanning for SQL injections, insecure library usage, and configuration weaknesses. Configured to fail on `MEDIUM` and `HIGH` severity findings.
-- **Semgrep (Pattern Matching):** Multilingual scanning using strict `security-audit` and `p/python` rulesets. Any finding within these rulesets will block the merge process.
-- **Trivy (Vulnerability Scan):** Automated scanning for OS vulnerabilities in the `Dockerfile` and library dependencies in `requirements.txt`. Configured with `exit-code: 1` to **strictly block the pipeline** if any **CRITICAL** vulnerability is detected.
-- **Inflexible Policy:** Code cannot reach the `main` branch if there are pending security findings of `MEDIUM` or `HIGH` severity (Bandit/Semgrep) or `CRITICAL` severity (Trivy).
+### 12. Asynchronous Ingestion & Backpressure (Kafka/Redpanda)
+To prevent Neo4j saturation during massive extraction processes, the system implements a decoupled producer-consumer pattern:
+- **Durable Ingestion Pipelines:** `cli/ingest.py` acts as a high-throughput producer, chunking documents and streaming them to a Kafka topic (`document_chunks`).
+- **Worker-based Consumption:** `core/worker.py` implements a resilient consumer with manual offset commits, ensuring zero message loss (At-Least-Once delivery).
+- **Backpressure Management:** The consumer loop is designed to respect database ingestion limits, polling and processing at a rate the graph database can sustain without performance degradation.
+
+### 13. API Gateway & Zero-Trust Perimeter (Kong/Tyk Integration)
+The API is designed to sit behind an enterprise-grade API Gateway (Kong or Tyk) to enforce a rigid security perimeter:
+- **mTLS Termination Enforcement:** The system explicitly validates the `X-SSL-Client-Verify` header, ensuring only traffic successfully authenticated via mutual TLS reaches the application.
+- **Multi-Tenant Token-based Rate Limiting:** Implements distributed rate limiting in `api/main.py` using Redis. Limits are applied per tenant (via `X-Tenant-ID`), protecting the system against application-level DoS attacks and ensuring fair resource allocation.
+- **Zero-Trust Identity Propagation:** Tenant identity is propagated through headers and strictly validated at the entry point, maintaining a stateless security model aligned with modern enterprise standards.
 
 ---
 

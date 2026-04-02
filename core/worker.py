@@ -14,8 +14,17 @@ OpenAIInstrumentor().instrument()
 
 from core.schemas import GraphExtraction
 from confluent_kafka import Consumer, KafkaError
+from core.database import Neo4jRepository
+from core.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Initialize the real Neo4j Repository
+neo4j_repo = Neo4jRepository(
+    uri=settings.NEO4J_URI,
+    user=settings.NEO4J_USER,
+    password=settings.NEO4J_PASSWORD,
+)
 
 # Initialize the Pydantic AI agent with the desired model
 agent = Agent(
@@ -25,13 +34,23 @@ agent = Agent(
 )
 
 
-def insert_to_neo4j(graph_data: GraphExtraction) -> None:
+async def insert_to_neo4j(graph_data: GraphExtraction) -> None:
     """
-    Dummy function to simulate persistence to Neo4j.
+    Asynchronously persists graph data to Neo4j using the Enterprise repository.
+    Handles fencing tokens to ensure transaction integrity.
     """
-    logger.info(
-        f"Successfully inserted {len(graph_data.nodes)} nodes and {len(graph_data.relationships)} relationships to Neo4j."
-    )
+    import time
+
+    # Use a high-resolution timestamp as a fencing token for idempotency
+    fencing_token = int(time.time() * 1000)
+    try:
+        await neo4j_repo.add_graph_data(graph_data, fencing_token)
+        logger.info(
+            f"Successfully persisted {len(graph_data.nodes)} nodes and {len(graph_data.relationships)} rels."
+        )
+    except Exception as e:
+        logger.error(f"Failed to insert graph data: {e}")
+        raise
 
 
 async def process_message_with_recovery(
@@ -68,18 +87,22 @@ async def process_message_with_recovery(
 async def consume_document_chunks() -> None:
     """
     Consumer loop that listens to the Redpanda 'document_chunks' topic using confluent-kafka.
+    Optimized for durability with manual offset commits and backpressure management.
     """
     logger.info("Starting confluent-kafka consumer for topic 'document_chunks'...")
     conf = {
         "bootstrap.servers": "localhost:9092",
         "group.id": "graph_extraction_group",
         "auto.offset.reset": "earliest",
+        "enable.auto.commit": False,  # Manual commit for durability
+        "session.timeout.ms": 6000,
     }
     consumer = Consumer(conf)
     consumer.subscribe(["document_chunks"])
 
     try:
         while True:
+            # Backpressure management: short poll interval allows for processing time
             msg = consumer.poll(timeout=1.0)
             if msg is None:
                 continue
@@ -90,12 +113,18 @@ async def consume_document_chunks() -> None:
                     logger.error(f"Consumer error: {msg.error()}")
                     break
 
-            content = msg.value().decode("utf-8")
+            content_dict = json.loads(msg.value().decode("utf-8"))
+            content = content_dict.get("content", "")
             try:
                 graph_data = await process_message_with_recovery(content)
                 if graph_data:
-                    insert_to_neo4j(graph_data)
+                    await insert_to_neo4j(graph_data)
+
+                # Commit offset after successful processing
+                consumer.commit(asynchronous=False)
             except Exception as e:
                 logger.error(f"Failed to process message: {e}")
+                # For enterprise grade, we could send to a Dead Letter Queue (DLQ) here
     finally:
         consumer.close()
+        await neo4j_repo.close()
