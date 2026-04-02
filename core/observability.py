@@ -22,12 +22,13 @@ from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.trace import Status, StatusCode
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
-# Standardized LLM Attributes (following OpenTelemetry semantic conventions for LLM where possible)
-LLM_PROMPT_TOKENS = "llm.usage.prompt_tokens"
-LLM_COMPLETION_TOKENS = "llm.usage.completion_tokens"
-LLM_TOTAL_TOKENS = "llm.usage.total_tokens"
-LLM_TTFT = "llm.latency.ttft"  # Time To First Token
-LLM_MODEL_NAME = "llm.model_name"
+# Standardized LLM Attributes (following OpenTelemetry semantic conventions for LLM)
+GEN_AI_SYSTEM = "gen_ai.system"
+GEN_AI_REQUEST_MODEL = "gen_ai.request.model"
+GEN_AI_USAGE_INPUT_TOKENS = "gen_ai.usage.input_tokens"
+GEN_AI_USAGE_OUTPUT_TOKENS = "gen_ai.usage.output_tokens"
+GEN_AI_USAGE_TOTAL_TOKENS = "gen_ai.usage.total_tokens"
+GEN_AI_LATENCY_TTFT = "gen_ai.latency.ttft"  # Time To First Token
 
 # --- Circuit Breaker Observability ---
 CIRCUIT_STATE_GAUGE = "circuit.breaker.state"  # 0: CLOSED, 1: HALF-OPEN, 2: OPEN
@@ -59,7 +60,18 @@ class SecurityAttributeProcessor(SpanProcessor):
             "set-cookie",
         }
         # Payload keys that must be validated by security node before logging
-        self.raw_payload_keys = {"prompt", "completion", "input", "output", "content"}
+        self.raw_payload_keys = {
+            "prompt",
+            "completion",
+            "input",
+            "output",
+            "content",
+            "gen_ai.input.messages",
+            "gen_ai.output.messages",
+            "tokens_entrada",
+            "prompt_length",
+            "ai.input",
+        }
 
     def on_start(self, span: Span, parent_context: Optional[Any] = None) -> None:
         pass
@@ -101,6 +113,7 @@ def setup_telemetry(service_name: str = "nexus-graph-ai") -> None:
 
 
 def record_llm_metrics(
+    system: str,
     model_name: str,
     prompt_tokens: int,
     completion_tokens: int,
@@ -111,28 +124,33 @@ def record_llm_metrics(
     Helper to record LLM-specific metrics and attributes.
     """
     tracer = trace.get_tracer(__name__)
-    meter = metrics.get_meter("llm.observability")
+    meter = metrics.get_meter("gen_ai.observability")
 
-    with tracer.start_as_current_span("llm_operation") as span:
+    with tracer.start_as_current_span("gen_ai.operation") as span:
         total_tokens = prompt_tokens + completion_tokens
 
-        span.set_attribute(LLM_MODEL_NAME, model_name)
-        span.set_attribute(LLM_PROMPT_TOKENS, prompt_tokens)
-        span.set_attribute(LLM_COMPLETION_TOKENS, completion_tokens)
-        span.set_attribute(LLM_TOTAL_TOKENS, total_tokens)
+        span.set_attribute(GEN_AI_SYSTEM, system)
+        span.set_attribute(GEN_AI_REQUEST_MODEL, model_name)
+        span.set_attribute(GEN_AI_USAGE_INPUT_TOKENS, prompt_tokens)
+        span.set_attribute(GEN_AI_USAGE_OUTPUT_TOKENS, completion_tokens)
+        span.set_attribute(GEN_AI_USAGE_TOTAL_TOKENS, total_tokens)
 
         if attributes:
             for k, v in attributes.items():
                 span.set_attribute(k, v)
 
         # Record metrics
-        token_counter = meter.get_instrument("llm.token_usage")
-        token_counter.add(total_tokens, {LLM_MODEL_NAME: model_name})
+        token_counter = meter.get_instrument("gen_ai.usage.tokens")
+        token_counter.add(
+            total_tokens, {GEN_AI_SYSTEM: system, GEN_AI_REQUEST_MODEL: model_name}
+        )
 
         if ttft_ms is not None:
-            span.set_attribute(LLM_TTFT, ttft_ms)
-            ttft_histogram = meter.get_instrument(LLM_TTFT)
-            ttft_histogram.record(ttft_ms, {LLM_MODEL_NAME: model_name})
+            span.set_attribute(GEN_AI_LATENCY_TTFT, ttft_ms)
+            ttft_histogram = meter.get_instrument(GEN_AI_LATENCY_TTFT)
+            ttft_histogram.record(
+                ttft_ms, {GEN_AI_SYSTEM: system, GEN_AI_REQUEST_MODEL: model_name}
+            )
 
 
 def setup_observability(service_name: str = "nexus-graph-ai") -> None:
@@ -177,12 +195,16 @@ def setup_observability(service_name: str = "nexus-graph-ai") -> None:
         metrics.set_meter_provider(meter_provider)
 
         # Initialize LLM specific meters
-        meter = metrics.get_meter("llm.observability")
+        meter = metrics.get_meter("gen_ai.observability")
         meter.create_histogram(
-            name=LLM_TTFT, description="Time to first token in milliseconds", unit="ms"
+            name=GEN_AI_LATENCY_TTFT,
+            description="Time to first token in milliseconds",
+            unit="ms",
         )
         meter.create_counter(
-            name="llm.token_usage", description="Total count of tokens used", unit="1"
+            name="gen_ai.usage.tokens",
+            description="Total count of tokens used",
+            unit="1",
         )
 
         # Initialize Circuit Breaker specific meters

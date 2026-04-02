@@ -44,7 +44,7 @@ Feeding raw graph data to LLMs often results in context window pollution and hal
 The system implements an enterprise-grade LLM Observability stack based on **OpenTelemetry**:
 - **Absolute Reliability & Resilience Metrics:** Real-time capture of **Circuit Breaker state** (0: CLOSED, 1: HALF-OPEN, 2: OPEN) and **failover frequency** injected into the OTel telemetry stream. This enables high-resolution monitoring and alerting on primary provider degradation.
 - **High-Resolution LLM Metrics:** Real-time capture of **Time To First Token (TTFT)**, fractional latency, and model-specific performance histograms.
-- **Economic Traceability:** Automatic injection of industry-standard attributes `llm.usage.prompt_tokens` and `llm.usage.completion_tokens` for precise financial cost attribution per reasoning step.
+- **Economic Traceability:** Automatic injection of industry-standard attributes `gen_ai.usage.input_tokens` and `gen_ai.usage.output_tokens` for precise financial cost attribution per reasoning step.
 - **Unified Distributed Tracing:** Seamless context propagation of Trace IDs across **LangGraph**, **Redis**, and **Neo4j** using W3C TraceContext, providing a "waterfall" visualization of the entire request lifecycle.
 - **Structural Obfuscation & Semantic Security:** A custom **OpenTelemetry Attribute Processor** replaces brittle regex-based redaction. It enforces zero-trust logging by blocking raw payloads (`prompt`, `completion`) unless explicitly validated by the semantic security node and redacting sensitive keys (API keys, tokens, PII) at the telemetry layer.
 

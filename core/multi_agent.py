@@ -12,6 +12,7 @@ from circuitbreaker import CircuitBreaker, CircuitBreakerState
 
 from core.observability import (
     get_meter,
+    record_llm_metrics,
     CIRCUIT_STATE_GAUGE,
     CIRCUIT_FAILOVER_COUNT,
 )
@@ -33,7 +34,7 @@ class LLMREBreaker(CircuitBreaker):
         kwargs.setdefault("recovery_timeout", self.RECOVERY_TIMEOUT)
         kwargs.setdefault("name", "llm_primary_breaker")
         super().__init__(*args, **kwargs)
-        self._meter = get_meter("llm.resilience")
+        self._meter = get_meter("gen_ai.resilience")
         self._state_map = {
             CircuitBreakerState.CLOSED: 0,
             CircuitBreakerState.HALF_OPEN: 1,
@@ -112,11 +113,24 @@ class OllamaProvider(LLMProvider):
     async def generate(
         self, messages: List[Dict[str, str]], temperature: float = 0.7
     ) -> str:
+        start_time = time.time()
         completion = await self.client.chat.completions.create(
             model=self.model,
             messages=messages,
             temperature=temperature,
         )
+        ttft = (time.time() - start_time) * 1000
+
+        usage = getattr(completion, "usage", None)
+        if usage:
+            record_llm_metrics(
+                system="ollama",
+                model_name=self.model,
+                prompt_tokens=usage.prompt_tokens,
+                completion_tokens=usage.completion_tokens,
+                ttft_ms=ttft,
+            )
+
         return completion.choices[0].message.content
 
 
@@ -129,10 +143,23 @@ class GeminiProvider(LLMProvider):
         self, messages: List[Dict[str, str]], temperature: float = 0.7
     ) -> str:
         prompt = "\n".join([f"{m['role']}: {m['content']}" for m in messages])
+        start_time = time.time()
         response = await self.model.generate_content_async(
             prompt,
             generation_config=genai.types.GenerationConfig(temperature=temperature),
         )
+        ttft = (time.time() - start_time) * 1000
+
+        usage = getattr(response, "usage_metadata", None)
+        if usage:
+            record_llm_metrics(
+                system="google",
+                model_name="gemini-pro",
+                prompt_tokens=usage.prompt_token_count,
+                completion_tokens=usage.candidates_token_count,
+                ttft_ms=ttft,
+            )
+
         return response.text
 
 
