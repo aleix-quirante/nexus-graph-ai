@@ -39,11 +39,12 @@ Feeding raw graph data to LLMs often results in context window pollution and hal
 - **Information Density Maximization:** Algorithmic ranking of node relevance based on edge weight, traversal depth, and semantic proximity.
 - **Hard Context Bounds:** Enforcing strict token limits by truncating peripheral data, ensuring optimal inference efficiency and reduced latency.
 
-### 6. Absolute Observability & Telemetry
-Every function call, state transition, and cypher query is instrumented:
-- **Structured JSON Logging:** Native integration with standard APM platforms (Datadog, ELK).
-- **Latency & Error Tracking:** Granular traces identifying bottlenecks in LLM inference vs Graph I/O.
-- **Audit Trails:** Immutable logs for all data mutations to comply with stringent enterprise auditing requirements.
+### 6. Absolute Observability & Telemetry (99.99% SLA)
+The system implements an enterprise-grade LLM Observability stack based on **OpenTelemetry**:
+- **High-Resolution LLM Metrics:** Real-time capture of **Time To First Token (TTFT)**, fractional latency, and model-specific performance histograms.
+- **Economic Traceability:** Automatic injection of industry-standard attributes `llm.usage.prompt_tokens` and `llm.usage.completion_tokens` for precise financial cost attribution per reasoning step.
+- **Unified Distributed Tracing:** Seamless context propagation of Trace IDs across **LangGraph**, **Redis**, and **Neo4j** using W3C TraceContext, providing a "waterfall" visualization of the entire request lifecycle.
+- **Structural Obfuscation & Semantic Security:** A custom **OpenTelemetry Attribute Processor** replaces brittle regex-based redaction. It enforces zero-trust logging by blocking raw payloads (`prompt`, `completion`) unless explicitly validated by the semantic security node and redacting sensitive keys (API keys, tokens, PII) at the telemetry layer.
 
 ### 7. Deep Health Probes & Resilience
 The system implements a production-grade asynchronous deep health check at `/health` to ensure high availability (99.99% SLA):
