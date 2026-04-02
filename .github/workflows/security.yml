@@ -42,3 +42,30 @@ jobs:
           # Strict mode with security-audit and python rules
           # --error: return non-zero exit code if findings are found
           semgrep scan --config p/python --config p/security-audit --error .
+
+  trivy:
+    name: Trivy SAST Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner (FS)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL'
+
+      - name: Run Trivy vulnerability scanner (Dockerfile)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'config'
+          scan-ref: '.'
+          format: 'table'
+          exit-code: '1'
+          severity: 'CRITICAL'
