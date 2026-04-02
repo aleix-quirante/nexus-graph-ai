@@ -60,12 +60,13 @@ The system implements a proactive horizontal scaling architecture (HPA) to maint
 - **Dynamic Thresholds:** Configured to trigger horizontal pod replication when reaching a threshold of **5 active tasks per pod**, ensuring low latency and preventing resource exhaustion.
 - **Fast Downscaling:** Optimized cooldown periods to release resources once AI bursts subside, maintaining cost-efficiency without sacrificing responsiveness.
 
-### 10. SOC2 Readiness & Zero-Trust Secret Management
-Security is not an afterthought. The system implements guardrails at every boundary:
-- **Zero-Trust Secret Ingestion:** Configuration is prioritized from mounted secrets (e.g., Kubernetes `Secret` or Vault) at `/var/run/secrets/nexus-graph-ai` via Pydantic's native `secrets_dir`. This prevents sensitive data leakage in environment variables or logs.
+### 10. Enterprise Security Pipeline & Gatekeeping
+Security is integrated at the pipeline level, ensuring zero-trust interaction between users and the core LLMs:
+- **PII/PHI Sanitization (Microsoft Presidio):** Real-time detection and automatic redaction of sensitive data (emails, phones, bank accounts, names) using local edge processing before the prompt reaches any model.
+- **SLM-based Integrity Guardrails:** Fast binary classification for Prompt Injection and Toxicity using specialized Small Language Models (SLMs). This layer acts as a "gatekeeper," blocking malicious intents with minimal latency and zero LLM invocation on violations.
+- **Output Validation:** Post-inference verification of LLM responses to prevent data leakage or non-compliant content generation.
+- **Zero-Trust Secret Ingestion:** Configuration is prioritized from mounted secrets (e.g., Kubernetes `Secret` or Vault) at `/var/run/secrets/nexus-graph-ai` via Pydantic's native `secrets_dir`.
 - **Enforced Encryption Schemes:** Fatal validators block application startup if connections to core dependencies (Neo4j, Redis) do not use strictly encrypted protocols (`neo4j+s://`, `rediss://`).
-- **Semantic Content Inspection (LLM as a Judge):** We utilize a dedicated Small Language Model (SLM) to perform semantic evaluation of all content, detecting toxicity, PII, PHI, and malicious intent.
-- **Strict Input Validation:** Pydantic-enforced schemas on all ingress endpoints, integrating robust network exception handling for the SLM judge to guarantee system stability and fail-safe operations.
 - **RBAC & Isolation:** Query isolation ensuring agents can only access authorized graph sub-graphs.
 - **Secret Management:** Strict segregation of sensitive credentials from the operational logic layer.
 

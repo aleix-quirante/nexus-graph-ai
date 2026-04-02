@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 from core.database import Neo4jClient, GraphRepository
 from core.schema_map import SCHEMA_MAP
+from core.security_guardrails import SecurityEnforcer, SecurityGuardrailViolation
 
 
 class CypherResponse(BaseModel):
@@ -56,6 +57,7 @@ class GraphQueryEngine:
         else:
             self.client = client
 
+        self.security = SecurityEnforcer()
         self.answer_agent = Agent(
             "openai:qwen2.5:32b",
             system_prompt=(
@@ -68,6 +70,12 @@ class GraphQueryEngine:
 
     async def query(self, user_question: str) -> str:
         try:
+            # 1. Input Security Layer (Sanitization & Guardrails)
+            print(f"🛡️ Validando integridad de entrada...")
+            sanitized_question = await self.security.sanitize_input(user_question)
+            if sanitized_question != user_question:
+                print(f"⚠️ PII detectado y redactado: '{sanitized_question}'")
+
             schema = await self.client.get_schema_snapshot()
 
             prompt = CYPHER_AGENT_PROMPT_TEMPLATE.format(
@@ -83,9 +91,9 @@ class GraphQueryEngine:
                 system_prompt=prompt,
             )
 
-            print(f"🧠 Analizando intención corporativa: '{user_question}'")
+            print(f"🧠 Analizando intención corporativa: '{sanitized_question}'")
             result = await cypher_agent.run(
-                f"Pregunta del usuario: {user_question}. Genera el Cypher."
+                f"Pregunta del usuario: {sanitized_question}. Genera el Cypher."
             )
             # Support both .data and .output based on pydantic-ai version
             cypher_data = getattr(result, "data", getattr(result, "output", None))
@@ -109,14 +117,22 @@ class GraphQueryEngine:
 
                 print("\n🤖 SINTETIZANDO RESPUESTA FINAL...")
                 final_response = await self.answer_agent.run(
-                    f"Pregunta del usuario: {user_question}\n\nDatos de la DB: {json.dumps(data, ensure_ascii=False)}"
+                    f"Pregunta del usuario: {sanitized_question}\n\nDatos de la DB: {json.dumps(data, ensure_ascii=False)}"
                 )
 
                 answer_data = getattr(
                     final_response, "data", getattr(final_response, "output", "")
                 )
-                print(f"\n✨ RESPUESTA:\n{answer_data}")
-                return answer_data
+
+                # 2. Output Security Layer (Validation)
+                print(f"🛡️ Validando integridad de salida...")
+                validated_answer = await self.security.validate_llm_output(answer_data)
+
+                print(f"\n✨ RESPUESTA:\n{validated_answer}")
+                return validated_answer
+        except SecurityGuardrailViolation as e:
+            print(f"🚨 Bloqueo de Seguridad (Gatekeeper): {str(e)}")
+            return f"Error de Seguridad: La consulta ha sido bloqueada por políticas corporativas."
         except Exception as e:
             print(f"❌ Error crítico en Engine: {str(e)}")
             traceback.print_exc()
