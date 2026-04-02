@@ -6,7 +6,9 @@ from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Callable
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Depends, Request, Response
+import asyncio
+from fastapi import FastAPI, Depends, Request, Response, HTTPException
+import redis.asyncio as aioredis
 from neo4j import AsyncGraphDatabase, AsyncDriver
 
 from core.observability import setup_telemetry
@@ -106,4 +108,25 @@ async def get_db_driver() -> AsyncGenerator[AsyncDriver, None]:
 
 @app.get("/health", tags=["System"])
 async def health_check() -> dict[str, str]:
-    return {"status": "ok", "system": "Nexus Graph AI Core"}
+    try:
+        redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+
+        async def check_redis():
+            await redis_client.setex("health_check", 5, "ok")
+
+        async def check_neo4j():
+            if db.driver is None:
+                raise Exception("Neo4j driver not initialized")
+            async with db.driver.session() as session:
+                result = await session.run("RETURN 1")
+                await result.single()
+
+        await asyncio.wait_for(
+            asyncio.gather(check_redis(), check_neo4j()), timeout=1.0
+        )
+        return {"status": "ok", "system": "Nexus Graph AI Core"}
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        raise HTTPException(status_code=503, detail="Service Unavailable")
+    finally:
+        await redis_client.aclose()
