@@ -14,6 +14,7 @@ from neo4j import AsyncGraphDatabase, AsyncDriver
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from core.observability import setup_telemetry, ACTIVE_AI_TASKS
 from core.config import settings
+from core.auth import verify_cryptographic_identity, TokenPayload
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -33,45 +34,17 @@ class Database:
 db = Database()
 
 
-class ZeroTrustSecurity:
-    """
-    Implements a strict security perimeter for the API.
-    Expects mTLS and Tenant identification to be handled by the API Gateway (Kong/Tyk).
-    """
-
-    @staticmethod
-    async def verify_mtls(request: Request):
-        # API Gateway (Kong) set this header after successful mTLS termination
-        client_verify = request.headers.get("X-SSL-Client-Verify")
-        if client_verify != "SUCCESS":
-            logger.warning("mTLS verification failed or header missing.")
-            raise HTTPException(
-                status_code=status.HTTP_403_FOR_REQUEST_FORBIDDEN,
-                detail="mTLS termination required at Gateway level.",
-            )
-
-    @staticmethod
-    async def get_tenant_id(request: Request) -> str:
-        tenant_id = request.headers.get("X-Tenant-ID")
-        if not tenant_id:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Tenant identification missing.",
-            )
-        return tenant_id
-
-
 async def rate_limit_per_tenant(
-    request: Request, tenant_id: str = Depends(ZeroTrustSecurity.get_tenant_id)
+    token: TokenPayload = Depends(verify_cryptographic_identity),
 ):
     """
     Distributed rate limiting using Redis.
-    Limits requests and token consumption (simulated).
+    Identity derived from cryptographic JWT 'sub' claim.
     """
     if not db.redis:
         return
 
-    key = f"rate_limit:{tenant_id}"
+    key = f"rate_limit:{token.sub}"
     # Simple fixed window rate limit: 100 requests per minute
     limit = 100
     window = 60
@@ -79,7 +52,7 @@ async def rate_limit_per_tenant(
     try:
         current = await db.redis.get(key)
         if current and int(current) >= limit:
-            logger.warning(f"Rate limit exceeded for tenant: {tenant_id}")
+            logger.warning(f"Rate limit exceeded for subject: {token.sub}")
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="Rate limit exceeded. Please try again later.",
@@ -126,7 +99,7 @@ app = FastAPI(
     lifespan=lifespan,
     title="Nexus Graph AI Enterprise",
     dependencies=[
-        Depends(ZeroTrustSecurity.verify_mtls),
+        Depends(verify_cryptographic_identity),
         Depends(rate_limit_per_tenant),
     ],
 )

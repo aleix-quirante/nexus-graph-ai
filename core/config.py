@@ -4,6 +4,11 @@ from typing import Optional
 
 
 class Settings(BaseSettings):
+    # Security configuration
+    JWT_PUBLIC_KEY: str = (
+        "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1v...\n-----END PUBLIC KEY-----"
+    )
+
     # Neo4j configuration
     NEO4J_URI: str = "neo4j+s://localhost:7687"
     NEO4J_USER: str = "neo4j"

@@ -1,5 +1,6 @@
 import logging
-from typing import Dict, List, Union, Any
+from contextvars import ContextVar
+from typing import Dict, List, Union, Any, Optional
 import re
 
 from fastapi import APIRouter, Request, HTTPException, Depends
@@ -14,11 +15,17 @@ from pydantic import BaseModel, Field
 from core.ontology import AllowedNodeLabels
 from core.concurrency import OntologyLockManager
 from core.config import settings
+from core.auth import verify_cryptographic_identity, TokenPayload
 
 from neo4j import AsyncDriver
 from neo4j.exceptions import TransientError, ClientError
 
 logger = logging.getLogger(__name__)
+
+# Context for Zero-Trust role propagation
+current_token: ContextVar[Optional[TokenPayload]] = ContextVar(
+    "current_token", default=None
+)
 
 PropertyType = Union[str, int, float, bool]
 
@@ -205,7 +212,7 @@ def set_mcp_db_driver(driver: AsyncDriver) -> None:
 
 
 @mcp_server.call_tool()
-async def handle_call_tool(
+async def execute_mcp_action(
     name: str, arguments: Dict[str, PropertyType]
 ) -> list[TextContent]:
     if not _global_db_driver:
@@ -219,6 +226,18 @@ async def handle_call_tool(
     service = MCPGraphService(_global_db_driver)
 
     try:
+        # Zero-Trust Role Verification: Mutative actions strictly require 'admin'
+        if name == "write_graph_edge":
+            token = current_token.get()
+            if not token or token.role != "admin":
+                logger.error(
+                    f"RBAC Violation: Subject {token.sub if token else 'UNKNOWN'} attempted write_graph_edge without admin role."
+                )
+                raise HTTPException(
+                    status_code=403,
+                    detail="Forbidden: Admin role derived mathematically from token is required for destructive graph mutations.",
+                )
+
         if name == "read_graph_node":
             data = ReadGraphNodeInput.model_validate(arguments)
             out = await service.read_node(data.node_id)
@@ -239,6 +258,8 @@ async def handle_call_tool(
         else:
             raise ValueError(f"Unknown tool: {name}")
 
+    except HTTPException:
+        raise
     except Exception as e:
         return [
             TextContent(type="text", text=f"Error processing tool {name}: {str(e)}")
@@ -252,63 +273,65 @@ from starlette.routing import Mount
 mcp_router = APIRouter()
 
 
-def get_rbac_role(request: Request) -> str:
-    role = request.headers.get("X-MCP-Role")
-    if not role or role not in ["admin", "agent"]:
-        raise HTTPException(
-            status_code=403,
-            detail="Acceso Denegado: Se requiere un rol valido en X-MCP-Role",
-        )
-    return role
-
-
 sse_transport = SseServerTransport("/mcp/messages")
 
 
 @mcp_router.get("/sse")
-async def mcp_sse(request: Request, role: str = Depends(get_rbac_role)) -> Response:
-    async with sse_transport.connect_sse(
-        request.scope, request.receive, request._send
-    ) as streams:
-        options = InitializationOptions(
-            server_name="nexus-graph-mcp",
-            server_version="1.0.0",
-            capabilities=mcp_server.get_capabilities(),
-        )
-        await mcp_server.run(streams[0], streams[1], options)
-    return Response()
+async def mcp_sse(
+    request: Request, token: TokenPayload = Depends(verify_cryptographic_identity)
+) -> Response:
+    token_reset = current_token.set(token)
+    try:
+        async with sse_transport.connect_sse(
+            request.scope, request.receive, request._send
+        ) as streams:
+            options = InitializationOptions(
+                server_name="nexus-graph-mcp",
+                server_version="1.0.0",
+                capabilities=mcp_server.get_capabilities(),
+            )
+            await mcp_server.run(streams[0], streams[1], options)
+        return Response()
+    finally:
+        current_token.reset(token_reset)
 
 
 @mcp_router.post("/messages")
 @mcp_router.post("/messages/")
 async def mcp_messages(
-    request: Request, role: str = Depends(get_rbac_role)
+    request: Request, token: TokenPayload = Depends(verify_cryptographic_identity)
 ) -> Response:
-    response_data = {"status": 200, "headers": [], "body": b""}
+    token_reset = current_token.set(token)
+    try:
+        response_data = {"status": 200, "headers": [], "body": b""}
 
-    async def dummy_send(message: dict) -> None:
-        if message["type"] == "http.response.start":
-            response_data["status"] = message["status"]
-            response_data["headers"] = message.get("headers", [])
-        elif message["type"] == "http.response.body":
-            response_data["body"] += message.get("body", b"")
+        async def dummy_send(message: dict) -> None:
+            if message["type"] == "http.response.start":
+                response_data["status"] = message["status"]
+                response_data["headers"] = message.get("headers", [])
+            elif message["type"] == "http.response.body":
+                response_data["body"] += message.get("body", b"")
 
-    await sse_transport.handle_post_message(request.scope, request.receive, dummy_send)
+        await sse_transport.handle_post_message(
+            request.scope, request.receive, dummy_send
+        )
 
-    headers = {
-        k.decode("utf-8"): v.decode("utf-8")
-        for k, v in response_data["headers"]
-        if k.decode("utf-8").lower() not in ["content-length", "content-type"]
-    }
+        headers = {
+            k.decode("utf-8"): v.decode("utf-8")
+            for k, v in response_data["headers"]
+            if k.decode("utf-8").lower() not in ["content-length", "content-type"]
+        }
 
-    content_type = "text/plain"
-    for k, v in response_data["headers"]:
-        if k.decode("utf-8").lower() == "content-type":
-            content_type = v.decode("utf-8")
+        content_type = "text/plain"
+        for k, v in response_data["headers"]:
+            if k.decode("utf-8").lower() == "content-type":
+                content_type = v.decode("utf-8")
 
-    return Response(
-        content=response_data["body"],
-        status_code=response_data["status"],
-        headers=headers,
-        media_type=content_type,
-    )
+        return Response(
+            content=response_data["body"],
+            status_code=response_data["status"],
+            headers=headers,
+            media_type=content_type,
+        )
+    finally:
+        current_token.reset(token_reset)
