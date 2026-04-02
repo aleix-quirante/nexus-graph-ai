@@ -15,6 +15,12 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+class StaleTransactionError(Exception):
+    """Exception raised when a concurrency violation is detected due to a stale fencing token."""
+
+    pass
+
+
 class GraphRepository(Protocol):
     async def check_connection(self) -> bool: ...
 
@@ -22,7 +28,9 @@ class GraphRepository(Protocol):
 
     async def get_schema_snapshot(self) -> Dict[str, Any]: ...
 
-    async def add_graph_data(self, extraction: GraphExtraction) -> None: ...
+    async def add_graph_data(
+        self, extraction: GraphExtraction, fencing_token: int
+    ) -> None: ...
 
     async def close(self) -> None: ...
 
@@ -102,42 +110,69 @@ class Neo4jRepository:
         retry=retry_if_exception_type((ServiceUnavailable, TransientError)),
         reraise=True,
     )
-    async def add_graph_data(self, extraction: GraphExtraction) -> None:
+    async def add_graph_data(
+        self, extraction: GraphExtraction, fencing_token: int
+    ) -> None:
         async with self.driver.session(database="neo4j") as session:
             await session.run("CREATE (t:Check {timestamp: datetime()})")
             logger.info("🚀 Prueba de escritura inicial: ÉXITO")
 
-            for node in extraction.nodes:
-                await session.execute_write(self._merge_node, node)
-            for rel in extraction.relationships:
-                await session.execute_write(self._execute_edge_mutation, rel)
+            # Empaquetar todos los nodos en una única lista
+            nodes_data = [
+                {"id": n.id, "label": n.label.value, "props": n.properties}
+                for n in extraction.nodes
+            ]
+
+            # Empaquetar todas las relaciones en una única lista
+            rels_data = [
+                {
+                    "source_id": r.source_id,
+                    "target_id": r.target_id,
+                    "type": r.type,
+                    "props": r.properties,
+                }
+                for r in extraction.relationships
+            ]
+
+            # Transmitir el lote completo en una sola transacción optimizada
+            await session.execute_write(
+                self._execute_batch_unwind, nodes_data, rels_data, fencing_token
+            )
 
         logger.info("Ingesta completada en la nube.")
 
     @staticmethod
-    async def _merge_node(tx: AsyncTransaction, node: Any) -> None:
-        query = f"MERGE (n:`{node.label.value}` {{id: $id}}) SET n += $props"
-        await tx.run(query, id=node.id, props=node.properties)
+    async def _execute_batch_unwind(
+        tx: AsyncTransaction, nodes_data: list, rels_data: list, fencing_token: int
+    ) -> None:
+        nodes_by_label = {}
+        for node in nodes_data:
+            nodes_by_label.setdefault(node["label"], []).append(node)
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
-        retry=retry_if_exception_type((ServiceUnavailable, TransientError)),
-        reraise=True,
-    )
-    async def _execute_edge_mutation(self, tx: AsyncTransaction, rel: Any) -> None:
-        query = (
-            f"MATCH (a {{id: $source_id}}), (b {{id: $target_id}}) "
-            f"WITH a, b LIMIT 1 "
-            f"MERGE (a)-[r:{rel.type}]->(b) "
-            "SET r += $props"
-        )
-        await tx.run(
-            query,
-            source_id=rel.source_id,
-            target_id=rel.target_id,
-            props=rel.properties,
-        )
+        for label, nodes in nodes_by_label.items():
+            query = (
+                f"UNWIND $nodes AS node "
+                f"MERGE (n:`{label}` {{id: node.id}}) "
+                "WITH n, node "
+                "WHERE coalesce(n.last_fencing_token, 0) < $fencing_token "
+                "SET n += node.props, n.last_fencing_token = $fencing_token"
+            )
+            await tx.run(query, nodes=nodes, fencing_token=fencing_token)
+
+        rels_by_type = {}
+        for rel in rels_data:
+            rels_by_type.setdefault(rel["type"], []).append(rel)
+
+        for rel_type, rels in rels_by_type.items():
+            query = (
+                "UNWIND $rels AS rel "
+                "MATCH (a {id: rel.source_id}), (b {id: rel.target_id}) "
+                f"MERGE (a)-[r:`{rel_type}`]->(b) "
+                "WITH r, rel "
+                "WHERE coalesce(r.last_fencing_token, 0) < $fencing_token "
+                "SET r += rel.props, r.last_fencing_token = $fencing_token"
+            )
+            await tx.run(query, rels=rels, fencing_token=fencing_token)
 
 
 # Maintain backward compatibility aliases if absolutely needed
