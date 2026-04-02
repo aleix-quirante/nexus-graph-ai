@@ -53,9 +53,11 @@ The system implements a production-grade asynchronous deep health check at `/hea
 - **Detailed State Reporting:** Returns `200 OK` only when all critical dependencies are operational. Returns `503 Service Unavailable` with granular component status if any dependency fails or times out.
 - **Safety First:** Health probes never trigger LLM inference, avoiding unnecessary costs, rate-limiting, or latency spikes.
 
-### 8. SOC2 Readiness by Design
+### 8. SOC2 Readiness & Zero-Trust Secret Management
 Security is not an afterthought. The system implements guardrails at every boundary:
-- **Semantic Content Inspection (LLM as a Judge):** We utilize a dedicated Small Language Model (SLM) to perform semantic evaluation of all content, detecting toxicity, PII, PHI, and malicious intent. This neutralizes evasion tactics like Leetspeak or Base64 encoding.
+- **Zero-Trust Secret Ingestion:** Configuration is prioritized from mounted secrets (e.g., Kubernetes `Secret` or Vault) at `/var/run/secrets/nexus-graph-ai` via Pydantic's native `secrets_dir`. This prevents sensitive data leakage in environment variables or logs.
+- **Enforced Encryption Schemes:** Fatal validators block application startup if connections to core dependencies (Neo4j, Redis) do not use strictly encrypted protocols (`neo4j+s://`, `rediss://`).
+- **Semantic Content Inspection (LLM as a Judge):** We utilize a dedicated Small Language Model (SLM) to perform semantic evaluation of all content, detecting toxicity, PII, PHI, and malicious intent.
 - **Strict Input Validation:** Pydantic-enforced schemas on all ingress endpoints, integrating robust network exception handling for the SLM judge to guarantee system stability and fail-safe operations.
 - **RBAC & Isolation:** Query isolation ensuring agents can only access authorized graph sub-graphs.
 - **Secret Management:** Strict segregation of sensitive credentials from the operational logic layer.
