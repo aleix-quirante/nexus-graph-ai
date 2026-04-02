@@ -77,20 +77,29 @@ from core.config import settings
 redis_client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
 
 
-async def check_idempotency_key(data_props: dict, window_seconds: int = 3600) -> bool:
-    # Use a precise hash of the data and tenant_id (if available) without time windows
-    # to ensure true idempotency unless data actually changes.
+async def check_idempotency_key(data_props: dict, window_seconds: int = 86400) -> bool:
+    """
+    Enterprise-grade idempotency using a cryptographic hash of the content.
+    Prevents duplicate mutations across distributed nodes for 24 hours.
+    """
     props_str = json.dumps(data_props, sort_keys=True)
     fingerprint = hashlib.sha256(props_str.encode("utf-8")).hexdigest()
 
-    key = f"neo4j_idempotency:{fingerprint}"
-    is_processed = await redis_client.get(key)
-    if is_processed:
-        return True
+    key = f"nexus_idempotency:{fingerprint}"
 
-    # Set with expiration to eventually clear old keys, but window is large
-    await redis_client.setex(key, 86400, "1")  # 24h cache
-    return False
+    # Atomic Check-and-Set using a Redis pipeline
+    async with redis_client.pipeline(transaction=True) as pipe:
+        await pipe.get(key)
+        await pipe.setex(key, window_seconds, "1")
+        results = await pipe.execute()
+
+        is_processed = results[0]
+        if is_processed:
+            logger.info(
+                f"Duplicate request detected for fingerprint: {fingerprint[:8]}"
+            )
+            return True
+        return False
 
 
 # ... rest remains unchanged but I'll patch the whole file ...
@@ -338,7 +347,7 @@ def build_graph() -> StateGraph:
     workflow.add_conditional_edges("reasoning_agent", route_reasoning)
     workflow.add_edge("terminal_node", END)
 
-    redis_connection = Redis.from_url("redis://localhost:6379")
+    redis_connection = Redis.from_url(settings.REDIS_URL)
     redis_saver = AsyncRedisSaver(redis_connection)
     app = workflow.compile(checkpointer=redis_saver)
     # The recursion_limit is set natively when invoking the graph
