@@ -2,12 +2,73 @@ import os
 import json
 import hashlib
 import asyncio
-from typing import TypedDict, Dict, List, Protocol
+import logging
+from typing import TypedDict, Dict, List, Protocol, Optional, Any
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.aioredis import AsyncRedisSaver
 import time
-import hashlib
 from redis.asyncio import Redis
+from circuitbreaker import CircuitBreaker, CircuitBreakerState
+
+from core.observability import (
+    get_meter,
+    CIRCUIT_STATE_GAUGE,
+    CIRCUIT_FAILOVER_COUNT,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class LLMREBreaker(CircuitBreaker):
+    """
+    Enterprise-grade Circuit Breaker for LLM failover.
+    Tracks state transitions and reports to OpenTelemetry.
+    """
+
+    FAILURE_THRESHOLD = 3
+    RECOVERY_TIMEOUT = 60  # seconds
+
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault("failure_threshold", self.FAILURE_THRESHOLD)
+        kwargs.setdefault("recovery_timeout", self.RECOVERY_TIMEOUT)
+        kwargs.setdefault("name", "llm_primary_breaker")
+        super().__init__(*args, **kwargs)
+        self._meter = get_meter("llm.resilience")
+        self._state_map = {
+            CircuitBreakerState.CLOSED: 0,
+            CircuitBreakerState.HALF_OPEN: 1,
+            CircuitBreakerState.OPEN: 2,
+        }
+        # Initialize instruments
+        self._state_gauge = self._meter.create_gauge(
+            name=CIRCUIT_STATE_GAUGE,
+            description="Circuit Breaker state (0: CLOSED, 1: HALF-OPEN, 2: OPEN)",
+            unit="1",
+        )
+        self._failover_counter = self._meter.create_counter(
+            name=CIRCUIT_FAILOVER_COUNT,
+            description="Total count of failovers",
+            unit="1",
+        )
+
+    def on_state_change(self, old_state, new_state):
+        logger.warning(
+            f"CIRCUIT BREAKER STATE CHANGE: {old_state.name} -> {new_state.name}"
+        )
+
+        # Update OTel metrics
+        try:
+            state_value = self._state_map.get(new_state, 0)
+            self._state_gauge.set(state_value)
+
+            # Track failover count when entering OPEN state
+            if new_state == CircuitBreakerState.OPEN:
+                self._failover_counter.add(
+                    1, {"target": "gemini-pro", "reason": "threshold_reached"}
+                )
+        except Exception as e:
+            logger.error(f"Failed to record metric: {e}")
+
 
 # Create redis client
 redis_client = Redis.from_url("redis://localhost:6379", decode_responses=True)
@@ -82,15 +143,33 @@ class CircuitBreakerRouter:
         self.primary = primary
         self.fallback = fallback
         self.timeout = timeout
+        self.breaker = LLMREBreaker(
+            name="llm_primary_breaker",
+            failure_threshold=3,
+            recovery_timeout=60,
+        )
 
     async def route_query(
         self, messages: List[Dict[str, str]], temperature: float = 0.7
     ) -> str:
+        """
+        Routes the LLM query using an enterprise-grade Circuit Breaker pattern.
+        If the primary local provider fails 3 times, redirects to cloud fallback (Gemini Pro).
+        Recovery (HALF-OPEN) begins after 60s cooldown.
+        """
         try:
-            return await asyncio.wait_for(
-                self.primary.generate(messages, temperature), timeout=self.timeout
-            )
+            # The circuit breaker context manager handles failures and state transitions.
+            # It raises circuitbreaker.CircuitBreakerError if the state is OPEN.
+            with self.breaker:
+                return await asyncio.wait_for(
+                    self.primary.generate(messages, temperature), timeout=self.timeout
+                )
         except Exception as e:
+            # Log the incident and trigger failover to cloud provider
+            logger.warning(
+                f"Failover triggered to Gemini Pro. Reason: {type(e).__name__} ({str(e)}). "
+                f"Breaker state: {self.breaker.state}"
+            )
             return await self.fallback.generate(messages, temperature)
 
 

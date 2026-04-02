@@ -29,6 +29,10 @@ LLM_TOTAL_TOKENS = "llm.usage.total_tokens"
 LLM_TTFT = "llm.latency.ttft"  # Time To First Token
 LLM_MODEL_NAME = "llm.model_name"
 
+# --- Circuit Breaker Observability ---
+CIRCUIT_STATE_GAUGE = "circuit.breaker.state"  # 0: CLOSED, 1: HALF-OPEN, 2: OPEN
+CIRCUIT_FAILOVER_COUNT = "circuit.breaker.failover_count"
+
 PHOENIX_ENDPOINT = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:6006/v1")
 TRACE_ENDPOINT = f"{PHOENIX_ENDPOINT}/traces"
 METRIC_ENDPOINT = f"{PHOENIX_ENDPOINT}/metrics"
@@ -179,6 +183,18 @@ def setup_observability(service_name: str = "nexus-graph-ai") -> None:
         )
         meter.create_counter(
             name="llm.token_usage", description="Total count of tokens used", unit="1"
+        )
+
+        # Initialize Circuit Breaker specific meters
+        meter.create_gauge(
+            name=CIRCUIT_STATE_GAUGE,
+            description="Circuit Breaker state (0: CLOSED, 1: HALF-OPEN, 2: OPEN)",
+            unit="1",
+        )
+        meter.create_counter(
+            name=CIRCUIT_FAILOVER_COUNT,
+            description="Total count of failovers",
+            unit="1",
         )
 
         logger.info(
