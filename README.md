@@ -73,5 +73,16 @@ make format && make lint && make typecheck && make test && make security-scan
 docker-compose up -d --build
 ```
 
+## 🧹 Code Quality & Maintenance
+
+The codebase undergoes regular automated linting and formatting to ensure consistency and maintainability. Recent cleanup efforts include:
+
+- **Removal of commented‑out code** across API, core, CLI, and test modules
+- **Automated fixes** via `ruff check --fix` and `ruff format` to enforce PEP 8 style and import ordering
+- **Identification of untested logic** – the observability module is flagged as complex infrastructure code suitable for future testing
+- **Summary of remaining linting issues** – non‑critical style warnings (line length, unused imports) are left for future refinement
+
+These improvements enhance readability and maintainability while preserving full functionality. The project’s linting pipeline (`make lint`) ensures ongoing adherence to quality standards.
+
 ---
 *Built for scale. Engineered for resilience. Nexus Graph AI.*
