@@ -1,0 +1,7 @@
+# REGLAS B2B BASE
+
+Stack: Python 3.12 y Pydantic v2.10+.
+
+Formato: Comentarios en español, código (variables/funciones) en inglés.
+
+Ejecución: Antes de programar, verifica siempre el archivo 00_REQUIREMENTS.md.

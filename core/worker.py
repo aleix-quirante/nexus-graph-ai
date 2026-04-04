@@ -1,8 +1,10 @@
 import json
 import logging
+import hashlib
 from typing import Optional, Dict, Any
 from pydantic import ValidationError
 from pydantic_ai import Agent
+import redis.asyncio as redis
 
 from openinference.instrumentation.openai import OpenAIInstrumentor
 from openinference.instrumentation.dspy import DSPyInstrumentor
@@ -31,12 +33,67 @@ neo4j_repo = Neo4jRepository(
 # Initialize Lock Manager for global fencing tokens
 lock_manager = OntologyLockManager(redis_url=settings.REDIS_URL)
 
+# Initialize Redis client for idempotency tracking
+redis_client: Optional[redis.Redis] = None
+
 # Initialize the Pydantic AI agent with the desired model
 agent = Agent(
     model="openai:gpt-4o",
     result_type=GraphExtraction,
     system_prompt="Extract entities and relationships from the provided document chunk.",
 )
+
+
+def compute_content_hash(content: str) -> str:
+    """
+    Compute SHA-256 hash of content for idempotency tracking.
+    Ensures deterministic duplicate detection across distributed workers.
+    """
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+async def get_redis_client() -> redis.Redis:
+    """
+    Lazy initialization of Redis client for idempotency.
+    Reuses connection across worker lifecycle.
+    """
+    global redis_client
+    if redis_client is None:
+        redis_client = redis.from_url(
+            settings.REDIS_URL,
+            encoding="utf-8",
+            decode_responses=True,
+        )
+    return redis_client
+
+
+async def is_content_processed(content_hash: str) -> bool:
+    """
+    Check if content has already been processed using Redis.
+    Returns True if duplicate, False if new content.
+    """
+    client = await get_redis_client()
+    try:
+        exists = await client.exists(f"processed:{content_hash}")
+        return bool(exists)
+    except Exception as e:
+        logger.error(f"Redis idempotency check failed: {e}", exc_info=True)
+        # Fail-open: If Redis is down, allow processing to continue
+        return False
+
+
+async def mark_content_processed(content_hash: str, ttl: int = 86400) -> None:
+    """
+    Mark content as processed in Redis with TTL (default 24 hours).
+    Prevents duplicate processing across distributed workers.
+    """
+    client = await get_redis_client()
+    try:
+        await client.setex(f"processed:{content_hash}", ttl, "1")
+        logger.info(f"Content marked as processed: {content_hash[:16]}...")
+    except Exception as e:
+        logger.error(f"Failed to mark content as processed: {e}", exc_info=True)
+        # Non-critical: Continue even if Redis write fails
 
 
 async def insert_to_neo4j(graph_data: GraphExtraction) -> None:
@@ -90,7 +147,7 @@ async def process_message_with_recovery(
 async def consume_document_chunks() -> None:
     """
     Consumer loop that listens to the Redpanda 'document_chunks' topic using confluent-kafka.
-    Optimized for durability with manual offset commits and backpressure management.
+    Optimized for durability with manual offset commits, backpressure management, and idempotency.
     """
     logger.info("Starting confluent-kafka consumer for topic 'document_chunks'...")
     conf = {
@@ -118,10 +175,27 @@ async def consume_document_chunks() -> None:
 
             content_dict = json.loads(msg.value().decode("utf-8"))
             content = content_dict.get("content", "")
+
             try:
+                # Idempotency check: Compute content hash
+                content_hash = compute_content_hash(content)
+
+                # Check if already processed
+                if await is_content_processed(content_hash):
+                    logger.info(
+                        f"Duplicate content detected (hash: {content_hash[:16]}...), skipping processing"
+                    )
+                    # Commit offset even for duplicates to avoid reprocessing
+                    consumer.commit(asynchronous=False)
+                    continue
+
+                # Process new content
                 graph_data = await process_message_with_recovery(content)
                 if graph_data:
                     await insert_to_neo4j(graph_data)
+
+                    # Mark as processed after successful insertion
+                    await mark_content_processed(content_hash)
 
                 # Commit offset after successful processing
                 consumer.commit(asynchronous=False)
@@ -131,3 +205,6 @@ async def consume_document_chunks() -> None:
     finally:
         consumer.close()
         await neo4j_repo.close()
+        # Close Redis connection
+        if redis_client:
+            await redis_client.close()

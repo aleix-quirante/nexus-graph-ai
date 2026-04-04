@@ -1,5 +1,5 @@
 from typing import Any, Dict, List, Optional, Type, Set
-from pydantic import BaseModel, Field, create_model
+from pydantic import BaseModel, Field, create_model, ConfigDict
 from datetime import datetime
 from enum import Enum
 
@@ -12,9 +12,15 @@ class AllowedNodeLabels(str, Enum):
 
 
 class EntitySchema(BaseModel):
-    name: str
+    """
+    Esquema de entidad con validación estricta B2B 2026.
+    """
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    name: str = Field(..., min_length=1, max_length=100)
     aliases: List[str] = Field(default_factory=list)
-    description: str = ""
+    description: str = Field(default="", max_length=1000)
     properties: Dict[str, Type] = Field(default_factory=dict)
     valid_from: datetime = Field(default_factory=datetime.utcnow)
     valid_until: Optional[datetime] = Field(default=None)
@@ -22,9 +28,15 @@ class EntitySchema(BaseModel):
 
 
 class RelationshipSchema(BaseModel):
-    name: str
+    """
+    Esquema de relación con validación estricta B2B 2026.
+    """
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    name: str = Field(..., min_length=1, max_length=100)
     aliases: List[str] = Field(default_factory=list)
-    description: str = ""
+    description: str = Field(default="", max_length=1000)
     allowed_sources: List[str] = Field(default_factory=list)
     allowed_targets: List[str] = Field(default_factory=list)
     valid_from: datetime = Field(default_factory=datetime.utcnow)

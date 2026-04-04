@@ -133,6 +133,46 @@ class Settings(BaseSettings):
             )
         return v
 
+    @field_validator("NEO4J_PASSWORD")
+    @classmethod
+    def validate_password_not_default(cls, v: SecretStr) -> SecretStr:
+        """
+        Previene despliegues con credenciales por defecto.
+        Estándar B2B 2026: Fail-fast en configuración insegura.
+        """
+        password = v.get_secret_value()
+
+        # Lista de passwords prohibidos (comunes y por defecto)
+        forbidden_passwords = [
+            "password",
+            "neo4j",
+            "admin",
+            "123456",
+            "12345678",
+            "qwerty",
+            "abc123",
+            "Password1",
+            "changeme",
+            "default",
+        ]
+
+        if password.lower() in [p.lower() for p in forbidden_passwords]:
+            raise ValueError(
+                f"Production deployment with default/weak password is forbidden. "
+                f"The password '{password[:3]}***' is in the list of commonly used passwords. "
+                f"Set NEO4J_PASSWORD environment variable with a strong credential (min 16 characters)."
+            )
+
+        # Validación de longitud mínima (B2B 2026 compliance)
+        if len(password) < 16:
+            raise ValueError(
+                f"NEO4J_PASSWORD must be at least 16 characters for B2B compliance. "
+                f"Current length: {len(password)} characters. "
+                f"Please use a strong password with minimum 16 characters."
+            )
+
+        return v
+
     model_config = SettingsConfigDict(
         # We still support .env for non-secret configuration if needed,
         # but secrets are now abstracted via the provider.
