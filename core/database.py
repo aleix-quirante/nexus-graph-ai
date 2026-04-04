@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import Any, Dict, Protocol
 from neo4j import AsyncGraphDatabase, AsyncDriver, AsyncTransaction
 from tenacity import (
@@ -145,6 +146,19 @@ class Neo4jRepository:
         logger.info("Ingesta completada en la nube.")
 
     @staticmethod
+    def validate_cypher_identifier(identifier: str) -> str:
+        """
+        Prevents Cypher injection by ensuring the identifier only contains
+        alphanumeric characters and underscores.
+        """
+        if not re.match(r"^[a-zA-Z0-9_]+$", identifier):
+            logger.error(
+                f"Security Alert: Invalid Cypher identifier blocked: {identifier}"
+            )
+            raise ValueError(f"Invalid Cypher identifier: {identifier}")
+        return identifier
+
+    @staticmethod
     async def _execute_batch_unwind(
         tx: AsyncTransaction, nodes_data: list, rels_data: list, fencing_token: int
     ) -> None:
@@ -153,9 +167,11 @@ class Neo4jRepository:
             nodes_by_label.setdefault(node["label"], []).append(node)
 
         for label, nodes in nodes_by_label.items():
+            # Mandatory Whitelist Validation for Dynamic Labels
+            safe_label = Neo4jRepository.validate_cypher_identifier(label)
             query = (
                 f"UNWIND $nodes AS node "
-                f"MERGE (n:`{label}` {{id: node.id}}) "
+                f"MERGE (n:`{safe_label}` {{id: node.id}}) "
                 "WITH n, node "
                 "WHERE coalesce(n.last_fencing_token, 0) < $fencing_token "
                 "SET n += node.props, n.last_fencing_token = $fencing_token"
@@ -167,10 +183,12 @@ class Neo4jRepository:
             rels_by_type.setdefault(rel["type"], []).append(rel)
 
         for rel_type, rels in rels_by_type.items():
+            # Mandatory Whitelist Validation for Dynamic Relationship Types
+            safe_rel_type = Neo4jRepository.validate_cypher_identifier(rel_type)
             query = (
                 "UNWIND $rels AS rel "
                 "MATCH (a {id: rel.source_id}), (b {id: rel.target_id}) "
-                f"MERGE (a)-[r:`{rel_type}`]->(b) "
+                f"MERGE (a)-[r:`{safe_rel_type}`]->(b) "
                 "WITH r, rel "
                 "WHERE coalesce(r.last_fencing_token, 0) < $fencing_token "
                 "SET r += rel.props, r.last_fencing_token = $fencing_token"

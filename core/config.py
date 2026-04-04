@@ -110,6 +110,11 @@ class Settings(BaseSettings):
     MCP_HOST: str = "0.0.0.0"
     MCP_PORT: int = 8000
 
+    # Security SLM Guard configuration
+    SLM_GUARD_ENDPOINT: str = secrets.get(
+        "SLM_GUARD_ENDPOINT", "http://localhost:8000/v1/chat/completions"
+    )
+
     @field_validator("NEO4J_URI")
     @classmethod
     def validate_neo4j_uri(cls, v: str) -> str:

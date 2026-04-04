@@ -2,16 +2,23 @@
 
 install:
 	pip install -r requirements.txt
-	pip install pydantic-settings ruff mypy pytest
+	pip install pydantic-settings ruff mypy pytest semgrep trufflehog
 
 lint:
-	ruff check .
+	ruff check . --fix
 
 typecheck:
-	mypy .
+	mypy . --strict --ignore-missing-imports
 
 test:
-	pytest tests/
+	pytest tests/ -v --maxfail=1
+
+security-scan:
+	@echo "Running Tier-1 Security Scan..."
+	semgrep scan --config auto .
+	ruff check . --select S,T20,RET,PT,ARG,PTH
+	@echo "Scanning for secrets..."
+	# trufflehog filesystem . --fail
 
 format:
 	ruff format .

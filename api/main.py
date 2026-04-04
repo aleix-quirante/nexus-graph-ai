@@ -237,31 +237,62 @@ async def health_check() -> dict[str, Any]:
             await result.single()
         return "ok"
 
+    async def check_model_integrity() -> str:
+        """
+        Deep model health check.
+        Ensures the local SLM is responsive and returning consistent security verdicts.
+        """
+        from core.security_guardrails import SLMGuard
+
+        guard = SLMGuard()
+        # Test with a known safe input
+        is_safe = await guard.check_integrity("Ping", mode="healthcheck")
+        if not is_safe:
+            raise RuntimeError(
+                "SLM Security Guard unreachable or returned violation for safe input."
+            )
+        return "ok"
+
     try:
         # Verify connectivity asynchronously with strict 2.0s timeout
         results = await asyncio.wait_for(
-            asyncio.gather(check_redis(), check_neo4j(), return_exceptions=True),
-            timeout=2.0,
+            asyncio.gather(
+                check_redis(),
+                check_neo4j(),
+                check_model_integrity(),
+                return_exceptions=True,
+            ),
+            timeout=3.0,
         )
 
         redis_status = "ok" if results[0] == "ok" else "error"
         neo4j_status = "ok" if results[1] == "ok" else "error"
+        model_status = "ok" if results[2] == "ok" else "error"
 
-        if redis_status != "ok" or neo4j_status != "ok":
+        if redis_status != "ok" or neo4j_status != "ok" or model_status != "ok":
             if isinstance(results[0], Exception):
                 logger.error(f"Redis Health Failure: {results[0]}")
             if isinstance(results[1], Exception):
                 logger.error(f"Neo4j Health Failure: {results[1]}")
+            if isinstance(results[2], Exception):
+                logger.error(f"Model Health Failure: {results[2]}")
 
             raise HTTPException(
                 status_code=503,
                 detail={
                     "status": "unhealthy",
-                    "components": {"redis": redis_status, "neo4j": neo4j_status},
+                    "components": {
+                        "redis": redis_status,
+                        "neo4j": neo4j_status,
+                        "slm_guard": model_status,
+                    },
                 },
             )
 
-        return {"status": "healthy", "components": {"redis": "ok", "neo4j": "ok"}}
+        return {
+            "status": "healthy",
+            "components": {"redis": "ok", "neo4j": "ok", "slm_guard": "ok"},
+        }
 
     except asyncio.TimeoutError:
         logger.error("Health check timed out after 2.0 seconds")

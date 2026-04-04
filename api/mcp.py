@@ -30,6 +30,20 @@ from neo4j.exceptions import TransientError, ClientError
 
 logger = logging.getLogger(__name__)
 
+
+def validate_cypher_identifier(identifier: str) -> str:
+    """
+    Stops Cypher injection by enforcing alphanumeric/underscore whitelist.
+    """
+    if not re.match(r"^[a-zA-Z0-9_]+$", identifier):
+        logger.error(f"Injection Attempt Blocked: {identifier}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Security Violation: Invalid character in graph identifier '{identifier}'",
+        )
+    return identifier
+
+
 # Context for Zero-Trust role propagation
 current_token: ContextVar[Optional[TokenPayload]] = ContextVar(
     "current_token", default=None
@@ -119,11 +133,14 @@ class MCPGraphService:
             """
             await tx.run(query_nodes, source_id=source_id, target_id=target_id)
 
+            # Mandatory validation of dynamic relationship types
+            safe_edge_type = validate_cypher_identifier(edge_type)
+
             # Optimistic Concurrency Control using MERGE and Enterprise Fencing Tokens.
             # Only perform the write if the current node/edge doesn't have a newer token.
             query = (
                 f"MATCH (a {{id: $source_id}}), (b {{id: $target_id}}) "
-                f"MERGE (a)-[r:`{edge_type}`]->(b) "
+                f"MERGE (a)-[r:`{safe_edge_type}`]->(b) "
                 "WITH r "
                 "WHERE coalesce(r.last_fencing_token, 0) < $fencing_token "
                 "SET r += $properties, r.last_fencing_token = $fencing_token "

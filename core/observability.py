@@ -84,39 +84,43 @@ class SecurityAttributeProcessor(SpanProcessor):
         pass
 
     def on_end(self, span: Span) -> None:
+        """
+        Final redaction layer before span export.
+        Ensures PII scrub and secret masking.
+        """
         if not span.is_recording():
             return
 
+        # Access attributes safely for redaction
+        # In a high-traffic Tier-1 environment, this processor must be O(n)
         attributes = dict(span.attributes)
-        filtered_attributes = {}
-
         security_validated = attributes.get("security.validated", False)
+        redacted_attrs = {}
 
         for key, value in attributes.items():
             key_lower = key.lower()
 
-            # 1. Block sensitive keys
             if any(s_key in key_lower for s_key in self.sensitive_keys):
-                filtered_attributes[key] = "[REDACTED_SENSITIVE]"
+                redacted_attrs[key] = "[REDACTED_SENSITIVE_KEY]"
                 continue
 
-            # 2. Scrub PII from payloads and block if not security validated
             if key_lower in self.raw_payload_keys:
                 if isinstance(value, str) and self.pii_sanitizer:
                     value = self.pii_sanitizer.sanitize(value)
 
                 if not security_validated:
-                    filtered_attributes[key] = (
-                        f"[PII_SCRUBBED][REDACTED_UNVALIDATED]: {value[:50]}..."
-                        if isinstance(value, str)
-                        else "[REDACTED_UNVALIDATED_PAYLOAD]"
+                    redacted_attrs[key] = (
+                        f"[PII_SCRUBBED][UNVALIDATED]: {str(value)[:40]}..."
                     )
                     continue
 
-            filtered_attributes[key] = value
+            redacted_attrs[key] = value
 
-        # Update span attributes (Note: _attributes is internal but commonly used for modification in processors)
-        span._attributes = filtered_attributes
+        # Update span attributes by overwriting
+        # Although _attributes is internal, it's widely used for filtering in processors.
+        # Standard API only allows additive set_attribute().
+        if hasattr(span, "_attributes"):
+            span._attributes = redacted_attrs
 
 
 def setup_telemetry(service_name: str = "nexus-graph-ai") -> None:
