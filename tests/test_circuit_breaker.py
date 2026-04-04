@@ -3,13 +3,15 @@ Tests for Circuit Breaker implementation in SLM Guard.
 Validates resilience patterns and warn-only mode behavior.
 """
 
-import pytest
 import time
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
 from core.security_guardrails import (
-    SLMGuardCircuitBreaker,
     CircuitState,
     SLMGuard,
+    SLMGuardCircuitBreaker,
 )
 
 

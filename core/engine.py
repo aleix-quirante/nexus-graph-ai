@@ -1,11 +1,12 @@
-import os
 import json
+import os
 import traceback
-from typing import Optional
+
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
-from core.database import Neo4jClient, GraphRepository
+
+from core.database import GraphRepository, Neo4jClient
 from core.schema_map import SCHEMA_MAP
 from core.security_guardrails import SecurityEnforcer, SecurityGuardrailViolation
 
@@ -46,7 +47,7 @@ REGLAS CRÍTICAS:
 
 
 class GraphQueryEngine:
-    def __init__(self, client: Optional[GraphRepository] = None):
+    def __init__(self, client: GraphRepository | None = None):
         if client is None:
             load_dotenv(override=True)
             self.client = Neo4jClient(
@@ -71,7 +72,7 @@ class GraphQueryEngine:
     async def query(self, user_question: str) -> str:
         try:
             # 1. Input Security Layer (Sanitization & Guardrails)
-            print(f"🛡️ Validando integridad de entrada...")
+            print("🛡️ Validando integridad de entrada...")
             sanitized_question = await self.security.sanitize_input(user_question)
             if sanitized_question != user_question:
                 print(f"⚠️ PII detectado y redactado: '{sanitized_question}'")
@@ -125,14 +126,14 @@ class GraphQueryEngine:
                 )
 
                 # 2. Output Security Layer (Validation)
-                print(f"🛡️ Validando integridad de salida...")
+                print("🛡️ Validando integridad de salida...")
                 validated_answer = await self.security.validate_llm_output(answer_data)
 
                 print(f"\n✨ RESPUESTA:\n{validated_answer}")
                 return validated_answer
         except SecurityGuardrailViolation as e:
             print(f"🚨 Bloqueo de Seguridad (Gatekeeper): {str(e)}")
-            return f"Error de Seguridad: La consulta ha sido bloqueada por políticas corporativas."
+            return "Error de Seguridad: La consulta ha sido bloqueada por políticas corporativas."
         except Exception as e:
             print(f"❌ Error crítico en Engine: {str(e)}")
             traceback.print_exc()

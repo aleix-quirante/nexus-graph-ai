@@ -1,12 +1,11 @@
-import json
-import httpx
 import logging
-import asyncio
 import time
-from typing import Any, List, Optional
 from enum import Enum
+
+import httpx
 from presidio_analyzer import AnalyzerEngine
 from presidio_anonymizer import AnonymizerEngine
+
 from core.config import settings
 
 # Setup logging
@@ -40,7 +39,7 @@ class SLMGuardCircuitBreaker:
 
         self.state = CircuitState.CLOSED
         self.failure_count = 0
-        self.last_failure_time: Optional[float] = None
+        self.last_failure_time: float | None = None
         self.half_open_calls = 0
         self.success_count = 0
 
@@ -185,7 +184,7 @@ class SLMGuard:
     Upgraded to use httpx, robust error handling, and Circuit Breaker pattern.
     """
 
-    def __init__(self, endpoint: Optional[str] = None):
+    def __init__(self, endpoint: str | None = None):
         self.endpoint = endpoint or settings.SLM_GUARD_ENDPOINT
         self.timeout = httpx.Timeout(1.0, connect=0.5)
         self.circuit_breaker = SLMGuardCircuitBreaker(

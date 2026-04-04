@@ -15,9 +15,9 @@ Date: 2026-04-04
 
 import pytest
 from pydantic import ValidationError
-from core.schemas import Node, Relationship, GraphExtraction
-from core.ontology import EntitySchema, RelationshipSchema, AllowedNodeLabels
 
+from core.ontology import AllowedNodeLabels, EntitySchema, RelationshipSchema
+from core.schemas import GraphExtraction, Node, Relationship
 
 # =============================================================================
 # PHASE 1: VULNERABILITY TESTS (Demonstrate Current Weaknesses)

@@ -1,7 +1,5 @@
-from typing import Dict
-
 # Immutable registry of pre-approved parameterized queries
-ALLOWED_CYPHER_TEMPLATES: Dict[str, str] = {
+ALLOWED_CYPHER_TEMPLATES: dict[str, str] = {
     "get_node_neighbors": """
         MATCH (n {id: $node_id})-[r]-(m)
         RETURN type(r) as relation, m.id as neighbor_id, m.type as neighbor_type

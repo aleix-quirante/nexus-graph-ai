@@ -1,7 +1,8 @@
-import os
 import asyncio
-from dotenv import load_dotenv
+import os
+
 from database import Neo4jClient
+from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
@@ -20,12 +21,12 @@ async def main():
     print("--- COMPARACIÓN DE URI ---")
     print(f"Len Test: {len(uri_test)}, Len Env: {len(uri_env)}")
     for i, (c1, c2) in enumerate(zip(uri_test, uri_env)):
-        print(f"Pos {i}: {repr(c1)} vs {repr(c2)} -> {'MATCH' if c1==c2 else 'DIFF'}")
+        print(f"Pos {i}: {repr(c1)} vs {repr(c2)} -> {'MATCH' if c1 == c2 else 'DIFF'}")
 
     print("\n--- COMPARACIÓN DE USER ---")
     print(f"Len Test: {len(user_test)}, Len Env: {len(user_env)}")
     for i, (c1, c2) in enumerate(zip(user_test, user_env)):
-        print(f"Pos {i}: {repr(c1)} vs {repr(c2)} -> {'MATCH' if c1==c2 else 'DIFF'}")
+        print(f"Pos {i}: {repr(c1)} vs {repr(c2)} -> {'MATCH' if c1 == c2 else 'DIFF'}")
 
     # 5. Intenta realizar una operación de ESCRITURA simple en 'debug_identity.py'
     # usando el mismo objeto 'Neo4jClient' que usa 'main.py'.

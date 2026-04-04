@@ -1,20 +1,19 @@
-import os
-import sys
-import re
 import logging
-from typing import List, Tuple
+import os
+import re
+import sys
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger("tier1-auditor")
 
 
-def audit_dockerfile(path: str) -> List[str]:
+def audit_dockerfile(path: str) -> list[str]:
     violations = []
     if not os.path.exists(path):
         return ["Dockerfile missing"]
 
-    with open(path, "r") as f:
+    with open(path) as f:
         content = f.read()
 
     if "USER" not in content:
@@ -35,12 +34,12 @@ def audit_dockerfile(path: str) -> List[str]:
     return violations
 
 
-def audit_auth_security(path: str) -> List[str]:
+def audit_auth_security(path: str) -> list[str]:
     violations = []
     if not os.path.exists(path):
         return ["core/auth.py missing"]
 
-    with open(path, "r") as f:
+    with open(path) as f:
         content = f.read()
 
     if "X-Forwarded-Client-Cert" not in content:
@@ -56,7 +55,7 @@ def audit_auth_security(path: str) -> List[str]:
     return violations
 
 
-def audit_cypher_injection_protection(dir_path: str) -> List[str]:
+def audit_cypher_injection_protection(dir_path: str) -> list[str]:
     violations = []
     # Search for f-strings in .run() or execute_query() calls
     # Note: This is a simplified static analysis.
@@ -66,13 +65,13 @@ def audit_cypher_injection_protection(dir_path: str) -> List[str]:
         for file in files:
             if file.endswith(".py"):
                 path = os.path.join(root, file)
-                with open(path, "r") as f:
+                with open(path) as f:
                     for i, line in enumerate(f):
                         if pattern.search(line):
                             # Check if it's protected by validate_cypher_identifier
                             if "validate_cypher_identifier" not in line:
                                 violations.append(
-                                    f"CYPHER INJECTION RISK: {path}:{i+1} - Potential unvalidated f-string in query."
+                                    f"CYPHER INJECTION RISK: {path}:{i + 1} - Potential unvalidated f-string in query."
                                 )
 
     return violations

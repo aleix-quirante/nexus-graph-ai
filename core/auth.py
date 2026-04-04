@@ -1,9 +1,9 @@
-from typing import Optional, Set
-from fastapi import Request, HTTPException, status
-from pydantic import BaseModel, ConfigDict, Field
+import logging
+
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
-import logging
+from fastapi import HTTPException, Request, status
+from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,7 @@ class TokenPayload(BaseModel):
     sub: str = Field(..., description="Subject identity (derived from CN)")
     role: str = Field("user", description="Primary role (derived from OU)")
     org: str = Field(..., description="Organization (derived from O)")
-    raw_roles: Set[str] = Field(
+    raw_roles: set[str] = Field(
         default_factory=set, description="Full set of roles/OUs"
     )
 

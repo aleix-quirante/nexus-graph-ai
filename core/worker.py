@@ -1,25 +1,25 @@
+import hashlib
 import json
 import logging
-import hashlib
-from typing import Optional, Dict, Any
+
+import redis.asyncio as redis
+from openinference.instrumentation.openai import OpenAIInstrumentor
 from pydantic import ValidationError
 from pydantic_ai import Agent
-import redis.asyncio as redis
 
-from openinference.instrumentation.openai import OpenAIInstrumentor
-from openinference.instrumentation.dspy import DSPyInstrumentor
 from core.observability import setup_telemetry
 
 # Initialize Telemetry early
 setup_telemetry("nexus-worker")
 OpenAIInstrumentor().instrument()
 
-from core.schemas import GraphExtraction
 from confluent_kafka import Consumer, KafkaError
-from core.database import Neo4jRepository
-from core.config import settings
+
 from core.concurrency import OntologyLockManager
-from core.exceptions import DatabaseTransactionError, NexusError, AIError
+from core.config import settings
+from core.database import Neo4jRepository
+from core.exceptions import AIError, DatabaseTransactionError
+from core.schemas import GraphExtraction
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ neo4j_repo = Neo4jRepository(
 lock_manager = OntologyLockManager(redis_url=settings.REDIS_URL)
 
 # Initialize Redis client for idempotency tracking
-redis_client: Optional[redis.Redis] = None
+redis_client: redis.Redis | None = None
 
 # Initialize the Pydantic AI agent with the desired model
 agent = Agent(
@@ -115,7 +115,7 @@ async def insert_to_neo4j(graph_data: GraphExtraction) -> None:
 
 async def process_message_with_recovery(
     content: str, max_retries: int = 3
-) -> Optional[GraphExtraction]:
+) -> GraphExtraction | None:
     """
     Process a message using Pydantic AI with an auto-recovery loop for format hallucinations.
     """

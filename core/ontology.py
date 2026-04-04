@@ -1,7 +1,8 @@
-from typing import Any, Dict, List, Optional, Type, Set
-from pydantic import BaseModel, Field, create_model, ConfigDict
 from datetime import datetime
 from enum import Enum
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, create_model
 
 
 class AllowedNodeLabels(str, Enum):
@@ -19,11 +20,11 @@ class EntitySchema(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
 
     name: str = Field(..., min_length=1, max_length=100)
-    aliases: List[str] = Field(default_factory=list)
+    aliases: list[str] = Field(default_factory=list)
     description: str = Field(default="", max_length=1000)
-    properties: Dict[str, Type] = Field(default_factory=dict)
+    properties: dict[str, type] = Field(default_factory=dict)
     valid_from: datetime = Field(default_factory=datetime.utcnow)
-    valid_until: Optional[datetime] = Field(default=None)
+    valid_until: datetime | None = Field(default=None)
     confidence_score: float = Field(default=1.0, ge=0.0, le=1.0)
 
 
@@ -35,19 +36,19 @@ class RelationshipSchema(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
 
     name: str = Field(..., min_length=1, max_length=100)
-    aliases: List[str] = Field(default_factory=list)
+    aliases: list[str] = Field(default_factory=list)
     description: str = Field(default="", max_length=1000)
-    allowed_sources: List[str] = Field(default_factory=list)
-    allowed_targets: List[str] = Field(default_factory=list)
+    allowed_sources: list[str] = Field(default_factory=list)
+    allowed_targets: list[str] = Field(default_factory=list)
     valid_from: datetime = Field(default_factory=datetime.utcnow)
-    valid_until: Optional[datetime] = Field(default=None)
+    valid_until: datetime | None = Field(default=None)
     confidence_score: float = Field(default=1.0, ge=0.0, le=1.0)
 
 
 class OntologyRegistry:
     def __init__(self):
-        self._entities: Dict[str, EntitySchema] = {}
-        self._relationships: Dict[str, RelationshipSchema] = {}
+        self._entities: dict[str, EntitySchema] = {}
+        self._relationships: dict[str, RelationshipSchema] = {}
 
     def register_entity(self, schema: EntitySchema):
         self._entities[schema.name.upper()] = schema
@@ -55,10 +56,10 @@ class OntologyRegistry:
     def register_relationship(self, schema: RelationshipSchema):
         self._relationships[schema.name.upper()] = schema
 
-    def get_entity(self, name: str) -> Optional[EntitySchema]:
+    def get_entity(self, name: str) -> EntitySchema | None:
         return self._entities.get(name.upper())
 
-    def get_relationship(self, name: str) -> Optional[RelationshipSchema]:
+    def get_relationship(self, name: str) -> RelationshipSchema | None:
         return self._relationships.get(name.upper())
 
     def resolve_entity_label(self, raw_label: str) -> str:
@@ -83,21 +84,21 @@ class OntologyRegistry:
                 return name
         return raw_upper
 
-    def generate_pydantic_models(self) -> Dict[str, Type[BaseModel]]:
+    def generate_pydantic_models(self) -> dict[str, type[BaseModel]]:
         # Generates Pydantic models for strictly validating extracted data
         models = {}
         for name, schema in self._entities.items():
             fields = {
                 "id": (str, Field(..., description="Unique ID for this entity")),
                 "label": (str, Field(default=name, Literal=name)),
-                "properties": (Dict[str, Any], Field(default_factory=dict)),
+                "properties": (dict[str, Any], Field(default_factory=dict)),
             }
             # For strictness, one could add specific properties based on schema.properties
             model = create_model(f"{name}Node", **fields, __base__=BaseModel)
             models[name] = model
         return models
 
-    def get_schema_map(self) -> Dict[str, Any]:
+    def get_schema_map(self) -> dict[str, Any]:
         """Provides a backward-compatible schema map dict."""
         return {
             "labels": {name: schema.aliases for name, schema in self._entities.items()},
@@ -112,9 +113,8 @@ class OntologyRegistry:
         }
 
 
-import os
-import asyncio
 from contextlib import asynccontextmanager
+
 from core.concurrency import OntologyLockManager as DistributedLockManager
 from core.config import settings
 

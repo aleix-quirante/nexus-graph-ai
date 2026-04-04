@@ -1,22 +1,22 @@
-import os
-import json
-import hashlib
 import asyncio
+import hashlib
+import json
 import logging
 import time
-from typing import TypedDict, Dict, List, Protocol, Optional, Any, Union
-from langgraph.graph import StateGraph, START, END
-from langgraph.checkpoint.aioredis import AsyncRedisSaver
-from redis.asyncio import Redis
+from typing import Any, Protocol, TypedDict
+
 from circuitbreaker import CircuitBreaker, CircuitBreakerState
-from pydantic import BaseModel, Field, ConfigDict
+from langgraph.checkpoint.aioredis import AsyncRedisSaver
+from langgraph.graph import END, START, StateGraph
+from pydantic import BaseModel
+from redis.asyncio import Redis
 
 from core.config import settings
 from core.observability import (
+    CIRCUIT_FAILOVER_COUNT,
+    CIRCUIT_STATE_GAUGE,
     get_meter,
     record_llm_metrics,
-    CIRCUIT_STATE_GAUGE,
-    CIRCUIT_FAILOVER_COUNT,
 )
 from core.security_guardrails import SecurityEnforcer, SecurityGuardrailViolation
 
@@ -94,12 +94,12 @@ async def check_idempotency_key(data_props: dict, window_seconds: int = 86400) -
 
 class LLMProvider(Protocol):
     async def generate(
-        self, messages: List[Dict[str, str]], temperature: float = 0.7
+        self, messages: list[dict[str, str]], temperature: float = 0.7
     ) -> str: ...
 
 
-from openai import AsyncOpenAI
 import google.generativeai as genai
+from openai import AsyncOpenAI
 
 
 class OllamaProvider(LLMProvider):
@@ -108,7 +108,7 @@ class OllamaProvider(LLMProvider):
         self.model = "llama3"
 
     async def generate(
-        self, messages: List[Dict[str, str]], temperature: float = 0.7
+        self, messages: list[dict[str, str]], temperature: float = 0.7
     ) -> str:
         start_time = time.time()
         completion = await self.client.chat.completions.create(
@@ -131,7 +131,7 @@ class GeminiProvider(LLMProvider):
         self.model = genai.GenerativeModel("gemini-pro")
 
     async def generate(
-        self, messages: List[Dict[str, str]], temperature: float = 0.7
+        self, messages: list[dict[str, str]], temperature: float = 0.7
     ) -> str:
         prompt = "\n".join([f"{m['role']}: {m['content']}" for m in messages])
         start_time = time.time()
@@ -166,7 +166,7 @@ class CircuitBreakerRouter:
         self.security = SecurityEnforcer()
 
     async def route_query(
-        self, messages: List[Dict[str, str]], temperature: float = 0.7
+        self, messages: list[dict[str, str]], temperature: float = 0.7
     ) -> str:
         try:
             with self.breaker:
@@ -231,12 +231,12 @@ class ExtractedEntity(BaseModel):
 
 
 class AgentState(TypedDict):
-    messages: List[str]
+    messages: list[str]
     current_node: str
-    extracted_entities: List[ExtractedEntity]
+    extracted_entities: list[ExtractedEntity]
     query: str
     response: str
-    history: List[ContextEntry]
+    history: list[ContextEntry]
     iterations: int
 
 
@@ -254,7 +254,7 @@ router = CircuitBreakerRouter(primary=ollama_provider, fallback=gemini_provider)
 security_enforcer = SpecializedGeminiEnforcer(provider=gemini_provider)
 
 
-async def reasoning_agent(state: AgentState) -> Dict[str, Any]:
+async def reasoning_agent(state: AgentState) -> dict[str, Any]:
     history = state.get("history", [])
     iterations = state.get("iterations", 0) + 1
 
@@ -331,7 +331,7 @@ async def route_reasoning(state: AgentState) -> str:
         return "terminal_node" if len(response) > 200 else "reasoning_agent"
 
 
-async def terminal_node(state: AgentState) -> Dict[str, str]:
+async def terminal_node(state: AgentState) -> dict[str, str]:
     return {"response": state.get("response", "")}
 
 

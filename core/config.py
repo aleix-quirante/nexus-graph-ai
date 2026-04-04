@@ -1,9 +1,8 @@
 import os
 from abc import ABC, abstractmethod
-from typing import Optional
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import SecretStr, field_validator
 
+from pydantic import SecretStr, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # --- Secret Management Abstraction (SOLID: Interface Segregation & Dependency Inversion) ---
 
@@ -12,7 +11,7 @@ class SecretProvider(ABC):
     """Abstract interface for secret retrieval (Strategy Pattern)."""
 
     @abstractmethod
-    def get_secret(self, key: str, default: Optional[str] = None) -> Optional[str]:
+    def get_secret(self, key: str, default: str | None = None) -> str | None:
         """Fetch a secret by key."""
         pass
 
@@ -20,14 +19,14 @@ class SecretProvider(ABC):
 class EnvSecretProvider(SecretProvider):
     """Initial implementation using environment variables (SOC2 Phase 1)."""
 
-    def get_secret(self, key: str, default: Optional[str] = None) -> Optional[str]:
+    def get_secret(self, key: str, default: str | None = None) -> str | None:
         return os.getenv(key, default)
 
 
 class VaultSecretProvider(SecretProvider):
     """Placeholder for HashiCorp Vault (SOC2 Phase 2)."""
 
-    def get_secret(self, key: str, default: Optional[str] = None) -> Optional[str]:
+    def get_secret(self, key: str, default: str | None = None) -> str | None:
         # Implementation for Vault would go here
         raise NotImplementedError("Vault provider not yet implemented.")
 
@@ -35,7 +34,7 @@ class VaultSecretProvider(SecretProvider):
 class AWSSecretManagerProvider(SecretProvider):
     """Placeholder for AWS Secrets Manager (SOC2 Phase 2)."""
 
-    def get_secret(self, key: str, default: Optional[str] = None) -> Optional[str]:
+    def get_secret(self, key: str, default: str | None = None) -> str | None:
         # Implementation for AWS would go here
         raise NotImplementedError("AWS provider not yet implemented.")
 
@@ -49,12 +48,10 @@ class SecretFacade:
     def __init__(self, provider: SecretProvider):
         self._provider = provider
 
-    def get(self, key: str, default: Optional[str] = None) -> Optional[str]:
+    def get(self, key: str, default: str | None = None) -> str | None:
         return self._provider.get_secret(key, default)
 
-    def get_secret_str(
-        self, key: str, default: Optional[str] = None
-    ) -> Optional[SecretStr]:
+    def get_secret_str(self, key: str, default: str | None = None) -> SecretStr | None:
         val = self.get(key, default)
         return SecretStr(val) if val is not None else None
 
@@ -102,9 +99,9 @@ class Settings(BaseSettings):
     REDIS_URL: str = secrets.get("REDIS_URL", "rediss://localhost:6379/0")
 
     # LLM API Keys - Using SecretStr to prevent accidental logging
-    OPENAI_API_KEY: Optional[SecretStr] = secrets.get_secret_str("OPENAI_API_KEY")
-    ANTHROPIC_API_KEY: Optional[SecretStr] = secrets.get_secret_str("ANTHROPIC_API_KEY")
-    GEMINI_API_KEY: Optional[SecretStr] = secrets.get_secret_str("GEMINI_API_KEY")
+    OPENAI_API_KEY: SecretStr | None = secrets.get_secret_str("OPENAI_API_KEY")
+    ANTHROPIC_API_KEY: SecretStr | None = secrets.get_secret_str("ANTHROPIC_API_KEY")
+    GEMINI_API_KEY: SecretStr | None = secrets.get_secret_str("GEMINI_API_KEY")
 
     # MCP configuration
     MCP_HOST: str = "0.0.0.0"

@@ -1,17 +1,17 @@
 import logging
 import re
-from typing import Any, Dict, Protocol
-from neo4j import AsyncGraphDatabase, AsyncDriver, AsyncTransaction
+from typing import Any, Protocol
+
+from neo4j import AsyncDriver, AsyncGraphDatabase, AsyncTransaction
+from neo4j.exceptions import ServiceUnavailable, TransientError
 from tenacity import (
     retry,
+    retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
-    retry_if_exception_type,
-    AsyncRetrying,
 )
-from neo4j.exceptions import ServiceUnavailable, TransientError
+
 from core.schemas import GraphExtraction
-from core.exceptions import DatabaseConnectionError
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -28,7 +28,7 @@ class GraphRepository(Protocol):
 
     async def clear_database(self) -> None: ...
 
-    async def get_schema_snapshot(self) -> Dict[str, Any]: ...
+    async def get_schema_snapshot(self) -> dict[str, Any]: ...
 
     async def add_graph_data(
         self, extraction: GraphExtraction, fencing_token: int
@@ -86,7 +86,7 @@ class Neo4jRepository:
         retry=retry_if_exception_type((ServiceUnavailable, TransientError)),
         reraise=True,
     )
-    async def get_schema_snapshot(self) -> Dict[str, Any]:
+    async def get_schema_snapshot(self) -> dict[str, Any]:
         async with self.driver.session() as session:
             labels_result = await session.run("CALL db.labels() YIELD label")
             labels = [record["label"] async for record in labels_result]

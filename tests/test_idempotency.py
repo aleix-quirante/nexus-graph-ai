@@ -3,14 +3,16 @@ Tests for Idempotency implementation in Worker.
 Validates content hash deduplication and Redis integration.
 """
 
-import pytest
 import hashlib
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
 from core.worker import (
     compute_content_hash,
+    get_redis_client,
     is_content_processed,
     mark_content_processed,
-    get_redis_client,
 )
 
 
@@ -306,7 +308,6 @@ class TestIdempotencyPerformance:
 
 # Import asyncio for concurrent tests
 import asyncio
-
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

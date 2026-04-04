@@ -1,5 +1,5 @@
-from pydantic import BaseModel, Field, ConfigDict
-from typing import List, Dict, Union
+from pydantic import BaseModel, ConfigDict, Field
+
 from core.ontology import AllowedNodeLabels
 
 
@@ -23,7 +23,7 @@ class Node(BaseModel):
         ...,
         description="Categoría semántica obligatoria del nodo, validada contra el Enum AllowedNodeLabels.",
     )
-    properties: Dict[str, Union[str, int, float, bool, None]] = Field(
+    properties: dict[str, str | int | float | bool | None] = Field(
         default_factory=dict,
         description="Diccionario clave-valor con los metadatos literales extraídos. Tipos explícitos: str, int, float, bool, None.",
     )
@@ -54,7 +54,7 @@ class Relationship(BaseModel):
         pattern=r"^[A-Z][A-Z0-9_]*$",
         description="Tipo de relación en UPPERCASE_SNAKE_CASE (ej. 'FIRMO_CONTRATO', 'CONTIENE_RIESGO').",
     )
-    properties: Dict[str, Union[str, int, float, bool, None]] = Field(
+    properties: dict[str, str | int | float | bool | None] = Field(
         default_factory=dict, description="Metadatos de la relación (ej. 'fecha')."
     )
 
@@ -66,10 +66,10 @@ class GraphExtraction(BaseModel):
 
     model_config = ConfigDict(strict=True, extra="forbid")
 
-    nodes: List[Node] = Field(
+    nodes: list[Node] = Field(
         ..., min_length=0, description="Lista de todos los nodos detectados."
     )
-    relationships: List[Relationship] = Field(
+    relationships: list[Relationship] = Field(
         ...,
         min_length=0,
         description="Lista de relaciones lógicas que conectan los nodos.",

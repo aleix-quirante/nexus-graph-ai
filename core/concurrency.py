@@ -1,10 +1,8 @@
-import asyncio
 import logging
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 import redis.asyncio as redis
-from redis.asyncio.lock import Lock
 
 logger = logging.getLogger(__name__)
 

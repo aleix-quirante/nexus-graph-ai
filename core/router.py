@@ -1,14 +1,15 @@
 import asyncio
 import json
-from typing import Any, Dict, List, Optional, TypedDict
-from pydantic import BaseModel, Field
-from langgraph.graph import StateGraph, END
+from typing import Any, TypedDict
+
+from langgraph.graph import END, StateGraph
 from neo4j import AsyncDriver
+from pydantic import BaseModel
 
 
 class ExtractedEntity(BaseModel):
     label: str
-    properties: Dict[str, Any]
+    properties: dict[str, Any]
 
 
 class InferenceState(TypedDict):
@@ -20,9 +21,9 @@ class InferenceState(TypedDict):
     max_depth: int
     context: str  # Condensed context
     attempts: int
-    extracted_entities: List[ExtractedEntity]
+    extracted_entities: list[ExtractedEntity]
     confidence_score: float
-    error: Optional[str]
+    error: str | None
 
 
 async def extract_and_prune_subgraph(
@@ -109,7 +110,7 @@ async def extract_and_prune_subgraph(
 # --- Mocks for LLMs ---
 
 
-async def mock_edge_llm(context: str) -> Dict[str, Any]:
+async def mock_edge_llm(context: str) -> dict[str, Any]:
     """
     Simulates a local Edge LLM execution.
     May be slow or yield low confidence.
@@ -124,7 +125,7 @@ async def mock_edge_llm(context: str) -> Dict[str, Any]:
     }
 
 
-async def mock_cloud_llm(context: str) -> Dict[str, Any]:
+async def mock_cloud_llm(context: str) -> dict[str, Any]:
     """
     Simulates a fallback to a Cloud LLM (e.g., GPT-4o).
     Highly reliable and high confidence.
@@ -157,7 +158,7 @@ async def edge_inference_node(state: InferenceState) -> InferenceState:
         state["confidence_score"] = result.get("confidence_score", 0.0)
         state["error"] = None
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         state["error"] = "TimeoutError"
         state["confidence_score"] = 0.0
     except Exception as e:

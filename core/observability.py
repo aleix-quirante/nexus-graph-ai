@@ -1,9 +1,9 @@
 import logging
 import os
-from typing import Any, Optional, Dict
+from typing import Any
 
+from opentelemetry import metrics, propagate, trace
 from prometheus_client import Gauge
-from opentelemetry import trace, metrics, propagate
 
 # --- Prometheus Metrics for KEDA Scaling ---
 # Define a Gauge to track active AI tasks for horizontal scaling
@@ -12,14 +12,13 @@ ACTIVE_AI_TASKS = Gauge(
     "Number of AI tasks currently being processed by this instance",
 )
 
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
-from opentelemetry.sdk.resources import Resource, SERVICE_NAME, DEPLOYMENT_ENVIRONMENT
-from opentelemetry.sdk.trace import TracerProvider, Span, SpanProcessor
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
-from opentelemetry.trace import Status, StatusCode
+from opentelemetry.sdk.resources import DEPLOYMENT_ENVIRONMENT, SERVICE_NAME, Resource
+from opentelemetry.sdk.trace import Span, SpanProcessor, TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
 # Standardized LLM Attributes (following OpenTelemetry semantic conventions for LLM)
@@ -80,7 +79,7 @@ class SecurityAttributeProcessor(SpanProcessor):
             logger.warning(f"PIISanitizer not available for observability: {e}")
             self.pii_sanitizer = None
 
-    def on_start(self, span: Span, parent_context: Optional[Any] = None) -> None:
+    def on_start(self, span: Span, parent_context: Any | None = None) -> None:
         pass
 
     def on_end(self, span: Span) -> None:
@@ -136,8 +135,8 @@ def record_llm_metrics(
     model_name: str,
     prompt_tokens: int,
     completion_tokens: int,
-    ttft_ms: Optional[float] = None,
-    attributes: Optional[Dict[str, Any]] = None,
+    ttft_ms: float | None = None,
+    attributes: dict[str, Any] | None = None,
 ) -> None:
     """
     Helper to record LLM-specific metrics and attributes.

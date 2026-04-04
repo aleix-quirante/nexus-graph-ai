@@ -1,7 +1,9 @@
-import pytest
 from unittest.mock import AsyncMock, patch
+
+import pytest
 from pydantic import ValidationError
-from core.schemas import GraphExtraction, Node, Relationship
+
+from core.schemas import GraphExtraction
 
 # Mock setup_telemetry before importing worker
 with patch("core.observability.setup_telemetry") as mock_setup_telemetry:

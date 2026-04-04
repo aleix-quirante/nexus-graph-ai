@@ -1,8 +1,8 @@
-import pytest
-import asyncio
 from unittest.mock import AsyncMock, patch
 
-from core.router import build_inference_graph, InferenceState, ExtractedEntity
+import pytest
+
+from core.router import InferenceState, build_inference_graph
 
 
 @pytest.fixture
@@ -55,7 +55,6 @@ async def test_router_edge_low_confidence_fallback(graph):
         patch("core.router.mock_edge_llm", new_callable=AsyncMock) as mock_edge,
         patch("core.router.mock_cloud_llm", new_callable=AsyncMock) as mock_cloud,
     ):
-
         mock_edge.return_value = {
             "extracted_entities": [
                 {"label": "CONCEPT", "properties": {"name": "EdgeLowConf"}}
@@ -89,7 +88,7 @@ async def test_router_edge_timeout_fallback(graph):
     ):
 
         async def slow_mock_edge(*args, **kwargs):
-            raise asyncio.TimeoutError()
+            raise TimeoutError()
 
         mock_edge.side_effect = slow_mock_edge
         mock_cloud.return_value = {

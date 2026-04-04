@@ -1,6 +1,6 @@
-import sys
 import asyncio
 import os
+import sys
 
 # Ensure the root directory is in the path to import core correctly
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))

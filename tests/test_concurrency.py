@@ -1,7 +1,9 @@
 import asyncio
+from unittest.mock import AsyncMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock
-from api.mcp import MCPGraphService, handle_call_tool, set_mcp_db_driver
+
+from api.mcp import handle_call_tool, set_mcp_db_driver
 from core.ontology import lock_manager
 
 
@@ -19,9 +21,9 @@ class MockSession:
     async def execute_write(self, query_func):
         # We simulate the Neo4j execute_write behavior but add race condition detection
         # If locks fail, multiple coroutines could enter execute_write concurrently
-        assert not self.concurrency_state[
-            "in_write"
-        ], "🚨 RACE CONDITION DETECTADA: Múltiples escrituras simultáneas en sesión"
+        assert not self.concurrency_state["in_write"], (
+            "🚨 RACE CONDITION DETECTADA: Múltiples escrituras simultáneas en sesión"
+        )
         self.concurrency_state["in_write"] = True
 
         # Simulate execution time to force race conditions if locks are missing
@@ -81,9 +83,9 @@ async def test_ontology_distributed_lock_concurrency() -> None:
             pytest.fail(f"Agent failed with exception: {res}")
 
     # The success_count should be exactly 10, meaning all 10 serialized successfully
-    assert (
-        concurrency_state["success_count"] == 10
-    ), f"Expected 10 serialized executions, got {concurrency_state['success_count']}"
-    assert not concurrency_state[
-        "in_write"
-    ], "Transaction flag was left True, possible state leak"
+    assert concurrency_state["success_count"] == 10, (
+        f"Expected 10 serialized executions, got {concurrency_state['success_count']}"
+    )
+    assert not concurrency_state["in_write"], (
+        "Transaction flag was left True, possible state leak"
+    )

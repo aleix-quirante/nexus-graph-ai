@@ -1,32 +1,30 @@
 import logging
-from contextvars import ContextVar
-from typing import Dict, List, Union, Any, Optional
 import re
+from contextvars import ContextVar
+from typing import Any, Union
 
-from fastapi import APIRouter, Request, HTTPException, Depends
+from fastapi import APIRouter, Depends, HTTPException, Request
+from mcp.server import Server
+from mcp.server.models import InitializationOptions
+from mcp.server.sse import SseServerTransport
+from mcp.types import TextContent, Tool
+from neo4j import AsyncDriver
+from neo4j.exceptions import ClientError, TransientError
+from pydantic import BaseModel, Field
 from starlette.responses import Response
 
-from mcp.server import Server
-from mcp.server.sse import SseServerTransport
-from mcp.types import Tool, TextContent
-from mcp.server.models import InitializationOptions
-from pydantic import BaseModel, Field
-
-from core.ontology import AllowedNodeLabels
+from core.auth import TokenPayload, verify_cryptographic_identity
 from core.concurrency import OntologyLockManager
 from core.config import settings
-from core.auth import verify_cryptographic_identity, TokenPayload
-from core.cypher_templates import get_safe_query, ALLOWED_CYPHER_TEMPLATES
+from core.cypher_templates import get_safe_query
 from core.exceptions import (
-    ResourceNotFoundError,
-    DatabaseTransactionError,
     AuthorizationError,
     ConflictError,
+    DatabaseTransactionError,
     NexusError,
+    ResourceNotFoundError,
 )
-
-from neo4j import AsyncDriver
-from neo4j.exceptions import TransientError, ClientError
+from core.ontology import AllowedNodeLabels
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +43,7 @@ def validate_cypher_identifier(identifier: str) -> str:
 
 
 # Context for Zero-Trust role propagation
-current_token: ContextVar[Optional[TokenPayload]] = ContextVar(
+current_token: ContextVar[TokenPayload | None] = ContextVar(
     "current_token", default=None
 )
 
@@ -64,14 +62,14 @@ class WriteGraphEdgeInput(BaseModel):
     edge_type: str = Field(
         ..., description="Tipo de relacion en formato UPPERCASE_SNAKE_CASE"
     )
-    properties: Dict[str, PropertyType] = Field(
+    properties: dict[str, PropertyType] = Field(
         default_factory=dict, description="Propiedades extra para la relacion"
     )
 
 
 class QuerySubgraphInput(BaseModel):
     intent_name: str = Field(..., description="Nombre de la consulta pre-aprobada")
-    parameters: Dict[str, Any] = Field(
+    parameters: dict[str, Any] = Field(
         default_factory=dict, description="Parametros de la consulta"
     )
 
@@ -79,18 +77,18 @@ class QuerySubgraphInput(BaseModel):
 class GraphNodeOutput(BaseModel):
     id: str
     label: AllowedNodeLabels
-    properties: Dict[str, PropertyType]
+    properties: dict[str, PropertyType]
 
 
 class GraphEdgeOutput(BaseModel):
     source_id: str
     target_id: str
     type: str
-    properties: Dict[str, PropertyType]
+    properties: dict[str, PropertyType]
 
 
 class QueryOutput(BaseModel):
-    records: List[Dict[str, PropertyType]]
+    records: list[dict[str, PropertyType]]
 
 
 # --- Abstraction Layer ---
@@ -122,7 +120,7 @@ class MCPGraphService:
         source_id: str,
         target_id: str,
         edge_type: str,
-        properties: Dict[str, PropertyType],
+        properties: dict[str, PropertyType],
     ) -> GraphEdgeOutput:
 
         async def _execute_edge_mutation(tx, fencing_token: int):
@@ -166,7 +164,7 @@ class MCPGraphService:
                             f"Write rejected: Stale token {token} for edge {source_id}->{target_id}"
                         )
                         raise ConflictError(
-                            f"Transaction rejected: A newer update (higher fencing token) has already been processed for this edge."
+                            "Transaction rejected: A newer update (higher fencing token) has already been processed for this edge."
                         )
         except (ClientError, TransientError) as e:
             logger.error(f"Error during edge creation: {e}", exc_info=True)
@@ -182,7 +180,7 @@ class MCPGraphService:
         )
 
     async def query_subgraph(
-        self, intent_name: str, parameters: Dict[str, Any] | None = None
+        self, intent_name: str, parameters: dict[str, Any] | None = None
     ) -> QueryOutput:
         if parameters is None:
             parameters = {}
@@ -199,7 +197,7 @@ class MCPGraphService:
 
             records = await session.execute_read(_execute_read)
 
-            output_records: List[Dict[str, PropertyType]] = []
+            output_records: list[dict[str, PropertyType]] = []
             for idx, r in enumerate(records):
                 output_records.append({"result_index": idx, "value": str(r)})
 
@@ -241,7 +239,7 @@ def set_mcp_db_driver(driver: AsyncDriver) -> None:
 
 @mcp_server.call_tool()
 async def execute_mcp_action(
-    name: str, arguments: Dict[str, PropertyType]
+    name: str, arguments: dict[str, PropertyType]
 ) -> list[TextContent]:
     if not _global_db_driver:
         return [
@@ -302,7 +300,6 @@ async def execute_mcp_action(
 
 # --- FastAPI Integration & RBAC ---
 
-from starlette.routing import Mount
 
 mcp_router = APIRouter()
 

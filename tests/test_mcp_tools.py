@@ -1,16 +1,16 @@
+from typing import Union
+
 import pytest
-from httpx import AsyncClient, ASGITransport
-import json
+from httpx import ASGITransport, AsyncClient
 
 from api.main import app
-from typing import Dict, Union, Any
 
 PropertyType = Union[str, int, float, bool]
 
 # Define base headers for valid requests
 VALID_HEADERS = {"X-MCP-Role": "admin"}
 INVALID_HEADERS = {"X-MCP-Role": "guest"}
-MISSING_HEADERS: Dict[str, str] = {}
+MISSING_HEADERS: dict[str, str] = {}
 
 
 @pytest.mark.asyncio
@@ -82,7 +82,7 @@ async def test_mcp_post_message_missing_session_id() -> None:
 # To test the tools themselves more cleanly (since MCP HTTP transport requires setting up SSE and taking session_id),
 # We can test the schema validation and graph service directly or through the mcp_server API.
 
-from api.mcp import mcp_server, MCPGraphService, set_mcp_db_driver, handle_call_tool
+from api.mcp import handle_call_tool, set_mcp_db_driver
 
 
 class DummyDriver:

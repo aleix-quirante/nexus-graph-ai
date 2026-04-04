@@ -1,6 +1,7 @@
 import json
 import logging
-from typing import Generator, Any
+from collections.abc import Generator
+from typing import Any
 
 from confluent_kafka import Producer
 

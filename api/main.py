@@ -1,26 +1,26 @@
+import asyncio
 import logging
-import os
 import time
 import uuid
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator, Callable, Any, Optional
+from typing import Any
 
-from dotenv import load_dotenv
-import asyncio
-from fastapi import FastAPI, Depends, Request, Response, HTTPException, status
 import redis.asyncio as aioredis
-from neo4j import AsyncGraphDatabase, AsyncDriver
+from dotenv import load_dotenv
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from neo4j import AsyncDriver, AsyncGraphDatabase
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
-from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
-from core.observability import setup_telemetry, ACTIVE_AI_TASKS
+from core.auth import TokenPayload, verify_cryptographic_identity
 from core.config import settings
-from core.auth import verify_cryptographic_identity, TokenPayload
 from core.exceptions import (
-    NexusError,
     DatabaseConnectionError,
-    RedisConnectionError,
+    NexusError,
     RateLimitExceededError,
+    RedisConnectionError,
 )
+from core.observability import ACTIVE_AI_TASKS, setup_telemetry
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -294,7 +294,7 @@ async def health_check() -> dict[str, Any]:
             "components": {"redis": "ok", "neo4j": "ok", "slm_guard": "ok"},
         }
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.error("Health check timed out after 2.0 seconds")
         raise HTTPException(
             status_code=503,
