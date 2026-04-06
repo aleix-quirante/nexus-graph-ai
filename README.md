@@ -58,6 +58,7 @@ Designed for deployment in high-availability Kubernetes clusters:
 - **PII/PHI Sanitization (Microsoft Presidio):** Real-time detection and redaction of emails, phones, bank accounts, and SSNs.
 - **SLM-based Integrity Guardrails:** Fast binary classification for Prompt Injection and Toxicity.
 - **mTLS Identity Derivation:** Cryptographic identity is derived from X.509 certificates (CN/OU) propagated via the `X-Forwarded-Client-Cert` header, mapping directly to application-level roles.
+- **CI/CD Security Scanning:** Automated SAST scans with Bandit, Semgrep, and Trivy integrated into GitHub Actions, enforcing zero‑trust supply‑chain security.
 
 ---
 
@@ -69,8 +70,12 @@ Designed for deployment in high-availability Kubernetes clusters:
 # Verify system dependencies and security baseline
 make format && make lint && make typecheck && make test && make security-scan
 
-# Initialize the infrastructure and boot the API
-docker-compose up -d --build
+# Build and run the API with Docker
+docker build -t nexus-graph-ai .
+docker run -p 8000:8000 --env-file .env nexus-graph-ai
+
+# Or deploy to Kubernetes (see k8s/deployment.yaml)
+# kubectl apply -f k8s/
 ```
 
 ## 🧹 Code Quality & Maintenance
@@ -80,6 +85,7 @@ The codebase undergoes regular automated linting and formatting to ensure consis
 - **Removal of commented‑out code** across API, core, CLI, and test modules
 - **Automated fixes** via `ruff check --fix` and `ruff format` to enforce PEP 8 style and import ordering
 - **Identification of untested logic** – the observability module is flagged as complex infrastructure code suitable for future testing
+- **Security Scanning Integration:** Automated SAST scans (Bandit, Semgrep, Trivy) are integrated into CI/CD, ensuring zero‑trust supply‑chain security.
 - **Summary of remaining linting issues** – non‑critical style warnings (line length, unused imports) are left for future refinement
 
 These improvements enhance readability and maintainability while preserving full functionality. The project’s linting pipeline (`make lint`) ensures ongoing adherence to quality standards.
